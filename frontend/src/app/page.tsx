@@ -14,7 +14,7 @@ import { AlertIcon } from "@/components/Icons";
 
 // ── types ──────────────────────────────────────────────────────────────
 type GridSize = 16 | 29 | 32 | 48 | 58 | 64;
-type ColorCount = 16 | 24 | 32 | 48;
+type ColorCount = 16 | 24 | 32 | 48 | 64 | 80 | 96 | 128 | 256;
 type Brand = "artkal" | "perler";
 
 interface BlueprintStats {
@@ -95,73 +95,51 @@ export default function Home() {
     setBlueprintUrl(null);
     setStats(null);
 
-    const fd = new FormData();
-    fd.append("image", file);
-    fd.append("size", String(gridSize));
-    fd.append("colors", String(colorCount));
-    fd.append("brand", brand);
+    try {
+      const fd = new FormData();
+      fd.append("image", file);
+      fd.append("size", String(gridSize));
+      fd.append("colors", String(colorCount));
+      fd.append("brand", brand);
 
-    // Render free tier sleeps after 15 min inactivity.
-    // Cold start takes 30-60s. We retry up to 3 times with
-    // increasing delays to give the server time to wake.
-    const RETRY_DELAYS = [0, 25_000, 35_000]; // 0s, 25s, 35s (total ~60s window)
-    const MAX_ATTEMPTS = RETRY_DELAYS.length;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60_000);
 
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      // Wait before retry (skip delay on first attempt)
-      if (attempt > 0) {
-        const waitSec = RETRY_DELAYS[attempt] / 1000;
-        setErrorMessage(`后端服务器正在启动中… 预计还需 ${waitSec} 秒（第 ${attempt + 1}/${MAX_ATTEMPTS} 次尝试）`);
-        await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
+      const res = await fetch(`${API_URL}/api/generate?format=json`, {
+        method: "POST",
+        body: fd,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(body.detail || `服务器错误（${res.status}）`);
       }
 
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90_000);
-
-        const res = await fetch(`${API_URL}/api/generate?format=json`, {
-          method: "POST",
-          body: fd,
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({})) as { detail?: string };
-          throw new Error(body.detail || `服务器错误（${res.status}）`);
-        }
-
-        const data = await res.json();
-        const imgBlob = base64ToBlob(data.image_base64, "image/png");
-        setBlueprintUrl(URL.createObjectURL(imgBlob));
-        setStats({
-          codes: data.codes,
-          names: data.names,
-          rgb: data.rgb,
-          counts: data.counts,
-          total: data.total,
-          grid_size: data.grid_size,
-          n_colors: data.n_colors,
-          brand: data.brand,
-        });
-        setErrorMessage(null);
-        setAppState("done");
-        return;
-      } catch (err) {
-        const isTimeout = (err as Error).name === "AbortError";
-        if (attempt === MAX_ATTEMPTS - 1) {
-          // Last attempt failed
-          if (isTimeout) {
-            setErrorMessage("请求超时，服务器启动时间较长，请点击「重新生成」再试一次");
-          } else {
-            setErrorMessage("网络连接失败，请检查手机网络后点击「重新生成」");
-          }
-        }
-        // If not last attempt, continue to next retry
-      }
+      const data = await res.json();
+      const imgBlob = base64ToBlob(data.image_base64, "image/png");
+      setBlueprintUrl(URL.createObjectURL(imgBlob));
+      setStats({
+        codes: data.codes,
+        names: data.names,
+        rgb: data.rgb,
+        counts: data.counts,
+        total: data.total,
+        grid_size: data.grid_size,
+        n_colors: data.n_colors,
+        brand: data.brand,
+      });
+      setAppState("done");
+    } catch (err) {
+      const isTimeout = (err as Error).name === "AbortError";
+      setErrorMessage(
+        isTimeout
+          ? "请求超时，请检查网络后重试"
+          : "网络连接失败，请检查网络后重试"
+      );
+      setAppState("error");
     }
-
-    setAppState("error");
   };
 
   const handleDownload = () => {

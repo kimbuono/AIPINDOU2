@@ -1,7 +1,7 @@
 "use client";
 
 type GridSize = 16 | 29 | 32 | 48 | 58 | 64;
-type ColorCount = 16 | 24 | 32 | 48;
+type ColorCount = 16 | 24 | 32 | 48 | 64 | 80 | 96 | 128 | 256;
 type Brand = "artkal" | "perler";
 
 const SIZES: { value: GridSize; label: string; desc: string }[] = [
@@ -18,6 +18,11 @@ const COLORS: { value: ColorCount; label: string }[] = [
   { value: 24, label: "24 色" },
   { value: 32, label: "32 色" },
   { value: 48, label: "48 色" },
+  { value: 64, label: "64 色" },
+  { value: 80, label: "80 色" },
+  { value: 96, label: "96 色" },
+  { value: 128, label: "128 色" },
+  { value: 256, label: "256 色" },
 ];
 
 const BRANDS: { value: Brand; label: string; desc: string }[] = [
