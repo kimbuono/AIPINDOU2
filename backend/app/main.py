@@ -3,13 +3,20 @@
 """
 
 import base64
+import logging
 import os
+import time
+import traceback
 
-from fastapi import FastAPI, File, Form, Query, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, Query, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from .processor import process
+
+# ── 日志 ────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("aipindou")
 
 app = FastAPI(
     title="爱拼豆 API",
@@ -99,25 +106,40 @@ async def generate(
         )
 
     # ── 读取文件 ─────────────────────────────────────────────────
+    logger.info(f"收到请求: size={size} colors={colors} brand={brand} format={format}")
+    t0 = time.time()
     data = await image.read()
+    logger.info(f"文件读取: {len(data):,} bytes ({len(data)/1024/1024:.1f} MB) in {time.time()-t0:.1f}s")
+
     if len(data) > MAX_FILE_SIZE:
         raise HTTPException(400, ERROR_MESSAGES["file_too_large"])
 
     # ── 处理 ─────────────────────────────────────────────────────
     try:
+        t1 = time.time()
         png_bytes, stats = process(
             data, grid_size=size, n_colors=colors, brand=brand.lower()
         )
+        elapsed = time.time() - t1
+        logger.info(
+            f"处理完成: {stats['total']}颗 {stats['n_colors']}色 "
+            f"PNG {len(png_bytes):,}bytes in {elapsed:.1f}s"
+        )
     except Exception as exc:
+        logger.error(f"处理失败: {exc}\n{traceback.format_exc()}")
         raise HTTPException(
             500, ERROR_MESSAGES["processing_failed"].format(detail=str(exc))
         )
 
     # ── 响应 ─────────────────────────────────────────────────────
+    total_time = time.time() - t0
     if format == "json":
+        b64 = base64.b64encode(png_bytes).decode("utf-8")
+        logger.info(f"JSON 响应: base64 {len(b64):,} chars, total {total_time:.1f}s")
         return {
-            "image_base64": base64.b64encode(png_bytes).decode("utf-8"),
+            "image_base64": b64,
             **stats,
         }
 
+    logger.info(f"PNG 响应: {len(png_bytes):,} bytes, total {total_time:.1f}s")
     return Response(content=png_bytes, media_type="image/png")

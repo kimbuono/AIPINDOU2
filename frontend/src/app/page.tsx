@@ -103,21 +103,61 @@ export default function Home() {
       fd.append("brand", brand);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60_000);
+      const timeoutId = setTimeout(() => controller.abort(), 120_000);
 
-      const res = await fetch(`${API_URL}/api/generate?format=json`, {
-        method: "POST",
-        body: fd,
-        signal: controller.signal,
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${API_URL}/api/generate?format=json`, {
+          method: "POST",
+          body: fd,
+          signal: controller.signal,
+        });
+      } catch (fetchErr: unknown) {
+        clearTimeout(timeoutId);
+        if ((fetchErr as Error).name === "AbortError") {
+          throw new Error("TIMEOUT");
+        }
+        // Network error (DNS, CORS, connection refused)
+        throw new Error(
+          "NETWORK:" + (
+            (fetchErr as Error).message || "无法连接到服务器"
+          )
+        );
+      }
       clearTimeout(timeoutId);
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { detail?: string };
-        throw new Error(body.detail || `服务器错误（${res.status}）`);
+        let detail = "";
+        try {
+          const body = await res.json() as { detail?: string };
+          detail = body.detail || "";
+        } catch {
+          // ignore parse errors on error response
+        }
+        throw new Error("SERVER:" + (detail || `服务器错误 HTTP ${res.status}`));
       }
 
-      const data = await res.json();
+      let data: {
+        image_base64: string;
+        codes: string[];
+        names: string[];
+        rgb: [number, number, number][];
+        counts: number[];
+        total: number;
+        grid_size: number;
+        n_colors: number;
+        brand: string;
+      };
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error("SERVER:返回数据格式异常，请重试");
+      }
+
+      if (!data.image_base64 || !data.rgb || !data.counts) {
+        throw new Error("SERVER:返回数据不完整，请重试");
+      }
+
       const imgBlob = base64ToBlob(data.image_base64, "image/png");
       setBlueprintUrl(URL.createObjectURL(imgBlob));
       setStats({
@@ -132,12 +172,16 @@ export default function Home() {
       });
       setAppState("done");
     } catch (err) {
-      const isTimeout = (err as Error).name === "AbortError";
-      setErrorMessage(
-        isTimeout
-          ? "请求超时，请检查网络后重试"
-          : "网络连接失败，请检查网络后重试"
-      );
+      const msg = (err as Error).message || "";
+      if (msg.startsWith("TIMEOUT")) {
+        setErrorMessage("请求超时。服务器可能正在启动，请等待 30 秒后点击「重新生成」");
+      } else if (msg.startsWith("SERVER:")) {
+        setErrorMessage(msg.slice(7));
+      } else if (msg.startsWith("NETWORK:")) {
+        setErrorMessage(msg.slice(8));
+      } else {
+        setErrorMessage(msg || "未知错误，请重试");
+      }
       setAppState("error");
     }
   };
