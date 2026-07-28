@@ -101,16 +101,23 @@ export default function Home() {
     fd.append("colors", String(colorCount));
     fd.append("brand", brand);
 
-    // Try up to 2 times — first attempt wakes Render from sleep,
-    // second attempt uses the now-warm backend.
-    const maxRetries = 2;
-    let lastErr: string | null = null;
+    // Render free tier sleeps after 15 min inactivity.
+    // Cold start takes 30-60s. We retry up to 3 times with
+    // increasing delays to give the server time to wake.
+    const RETRY_DELAYS = [0, 25_000, 35_000]; // 0s, 25s, 35s (total ~60s window)
+    const MAX_ATTEMPTS = RETRY_DELAYS.length;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      // Wait before retry (skip delay on first attempt)
+      if (attempt > 0) {
+        const waitSec = RETRY_DELAYS[attempt] / 1000;
+        setErrorMessage(`后端服务器正在启动中… 预计还需 ${waitSec} 秒（第 ${attempt + 1}/${MAX_ATTEMPTS} 次尝试）`);
+        await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
+      }
+
       try {
-        // Timeout: 75s per attempt (compatible with all mobile browsers)
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 75_000);
+        const timeoutId = setTimeout(() => controller.abort(), 90_000);
 
         const res = await fetch(`${API_URL}/api/generate?format=json`, {
           method: "POST",
@@ -137,27 +144,23 @@ export default function Home() {
           n_colors: data.n_colors,
           brand: data.brand,
         });
+        setErrorMessage(null);
         setAppState("done");
-        return; // success — exit retry loop
+        return;
       } catch (err) {
-        const isAbort = (err as Error).name === "AbortError";
-        const msg = isAbort
-          ? "请求超时，服务器正在启动中（约需 30 秒），正在重试…"
-          : "服务器正在预热中，即将自动重试…";
-
-        lastErr = isAbort ? "请求超时，请稍后重试" : "服务器响应异常，请稍后重试";
-
-        if (attempt < maxRetries) {
-          // Show progress to user, then retry after delay
-          setErrorMessage(msg);
-          await new Promise(r => setTimeout(r, 12_000)); // wait 12s for Render to wake
-          setErrorMessage(null);
+        const isTimeout = (err as Error).name === "AbortError";
+        if (attempt === MAX_ATTEMPTS - 1) {
+          // Last attempt failed
+          if (isTimeout) {
+            setErrorMessage("请求超时，服务器启动时间较长，请点击「重新生成」再试一次");
+          } else {
+            setErrorMessage("网络连接失败，请检查手机网络后点击「重新生成」");
+          }
         }
+        // If not last attempt, continue to next retry
       }
     }
 
-    // All retries exhausted
-    setErrorMessage(lastErr || "生成失败，请检查网络后重试");
     setAppState("error");
   };
 
