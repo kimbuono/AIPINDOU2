@@ -15,13 +15,17 @@ import { AlertIcon } from "@/components/Icons";
 // ── types ──────────────────────────────────────────────────────────────
 type GridSize = 16 | 29 | 32 | 48 | 58 | 64;
 type ColorCount = 16 | 24 | 32 | 48;
+type Brand = "artkal" | "perler";
 
 interface BlueprintStats {
-  palette: [number, number, number][];
+  codes: string[];
+  names: string[];
+  rgb: [number, number, number][];
   counts: number[];
   total: number;
   grid_size: number;
   n_colors: number;
+  brand: string;
 }
 
 type AppState = "idle" | "ready" | "generating" | "done" | "error";
@@ -34,21 +38,21 @@ const API_URL =
 // ── page ───────────────────────────────────────────────────────────────
 
 export default function Home() {
-  // file state
+  // file
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // config state
+  // config
   const [gridSize, setGridSize] = useState<GridSize>(48);
   const [colorCount, setColorCount] = useState<ColorCount>(32);
+  const [brand, setBrand] = useState<Brand>("artkal");
 
-  // result state
+  // result
   const [appState, setAppState] = useState<AppState>("idle");
   const [blueprintUrl, setBlueprintUrl] = useState<string | null>(null);
   const [stats, setStats] = useState<BlueprintStats | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // derived
   const isLanding = appState === "idle" || appState === "ready";
 
   // ── handlers ─────────────────────────────────────────────────────
@@ -83,6 +87,7 @@ export default function Home() {
       fd.append("image", file);
       fd.append("size", String(gridSize));
       fd.append("colors", String(colorCount));
+      fd.append("brand", brand);
 
       const res = await fetch(`${API_URL}/api/generate?format=json`, {
         method: "POST",
@@ -98,11 +103,14 @@ export default function Home() {
       const imgBlob = base64ToBlob(data.image_base64, "image/png");
       setBlueprintUrl(URL.createObjectURL(imgBlob));
       setStats({
-        palette: data.palette,
+        codes: data.codes,
+        names: data.names,
+        rgb: data.rgb,
         counts: data.counts,
         total: data.total,
         grid_size: data.grid_size,
         n_colors: data.n_colors,
+        brand: data.brand,
       });
       setAppState("done");
     } catch (err) {
@@ -115,7 +123,7 @@ export default function Home() {
     if (!blueprintUrl) return;
     const a = document.createElement("a");
     a.href = blueprintUrl;
-    a.download = `爱拼豆_${gridSize}x${gridSize}.png`;
+    a.download = `爱拼豆_${brand}_${gridSize}x${gridSize}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -128,10 +136,8 @@ export default function Home() {
       <Header />
 
       <main className="flex-1">
-        {/* hero — only when landing (no file) */}
         {appState === "idle" && <Hero />}
 
-        {/* workspace */}
         <div className="mx-auto max-w-2xl px-5 pb-20 space-y-6">
           {/* upload */}
           <section className={appState === "idle" ? "-mt-6" : "mt-8"}>
@@ -143,19 +149,21 @@ export default function Home() {
             />
           </section>
 
-          {/* config — only after image uploaded, before result */}
+          {/* config */}
           {file && appState !== "done" && (
             <section className="animate-fade-in">
               <ConfigPanel
                 gridSize={gridSize}
                 colorCount={colorCount}
+                brand={brand}
                 onGridSizeChange={setGridSize}
                 onColorCountChange={setColorCount}
+                onBrandChange={setBrand}
               />
             </section>
           )}
 
-          {/* generate CTA */}
+          {/* generate */}
           {file && appState !== "done" && (
             <section className={appState === "ready" ? "animate-fade-in" : ""}>
               <GenerateButton
@@ -187,36 +195,17 @@ export default function Home() {
 
           {/* result */}
           {appState === "done" && stats && blueprintUrl && (
-            <section>
-              <BlueprintResult
-                imageUrl={blueprintUrl}
-                stats={stats}
-                originalUrl={previewUrl}
-                onDownload={handleDownload}
-              />
-
-              {/* regenerate / reset */}
-              <div className="flex items-center gap-3 mt-6">
-                <button
-                  onClick={handleGenerate}
-                  className="flex-1 py-3 rounded-xl text-[14px] font-semibold border border-neutral-200
-                             text-neutral-600 hover:bg-neutral-50 transition-colors"
-                >
-                  重新生成
-                </button>
-                <button
-                  onClick={handleFileRemove}
-                  className="flex-1 py-3 rounded-xl text-[14px] font-semibold border border-neutral-200
-                             text-neutral-600 hover:bg-neutral-50 transition-colors"
-                >
-                  制作新图纸
-                </button>
-              </div>
-            </section>
+            <BlueprintResult
+              imageUrl={blueprintUrl}
+              stats={stats}
+              originalUrl={previewUrl}
+              onDownload={handleDownload}
+              onRegenerate={handleGenerate}
+              onReset={handleFileRemove}
+            />
           )}
         </div>
 
-        {/* landing sections — only when no file */}
         {isLanding && (
           <>
             <FeatureCards />

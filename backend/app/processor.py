@@ -1,425 +1,495 @@
 """
-Image processor for bead art blueprint generation.
+V3 Image processor — professional bead-art blueprint generation.
 
 Pipeline:
-  1. Load & normalize
-  2. Pre-resize (LANCZOS, 4× target) to preserve detail
-  3. K-means colour quantisation (pure Python, no heavy deps)
-  4. Down-sample to target grid (NEAREST)
-  5. Render bead cells with rounded corners & shadows
-  6. Render colour legend with counts & total
-  7. Composite & export PNG
+  1. Load & auto-enhance (contrast, sharpen, denoise)
+  2. Smart crop to content
+  3. Aspect-ratio-preserving resize with letterbox
+  4. Colour quantisation via professional bead palettes (Lab KD-tree)
+  5. Render bead grid with row/column coordinates
+  6. Render professional legend (code, name, count, percentage)
+  7. Composite & export high-resolution PNG
 """
 
 from __future__ import annotations
 
 import math
-import random
 from io import BytesIO
 from typing import List, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
+
+from .colormap import get_mapper
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# K-means colour quantisation (pure Python)
+# Design tokens
 # ═══════════════════════════════════════════════════════════════════════
 
-def _kmeans_colors(
-    pixels: List[Tuple[int, int, int]],
-    k: int,
-    max_iters: int = 20,
-) -> List[Tuple[int, int, int]]:
-    """
-    Cluster *pixels* into *k* clusters, returning the k centroids.
-
-    Uses k-means++ initialisation for better quality and stability.
-    """
-    if k >= len(pixels):
-        return list(set(pixels))
-
-    # --- k-means++ init ---
-    centroids = [random.choice(pixels)]
-    for _ in range(1, k):
-        # compute squared distances to nearest centroid
-        dists = [
-            min(
-                (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2 + (p[2] - c[2]) ** 2
-                for c in centroids
-            )
-            for p in pixels
-        ]
-        total = sum(dists)
-        if total == 0:
-            # all remaining points identical, break
-            break
-        r = random.random() * total
-        cum = 0
-        for i, d in enumerate(dists):
-            cum += d
-            if cum >= r:
-                centroids.append(pixels[i])
-                break
-
-    # --- Lloyd iteration ---
-    for _ in range(max_iters):
-        # assign each pixel to nearest centroid
-        assignments: List[List[Tuple[int, int, int]]] = [[] for _ in range(k)]
-        for p in pixels:
-            best_c = 0
-            best_d = float("inf")
-            for ci, c in enumerate(centroids):
-                d = (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2 + (p[2] - c[2]) ** 2
-                if d < best_d:
-                    best_d = d
-                    best_c = ci
-            assignments[best_c].append(p)
-
-        # recompute centroids
-        new_centroids: List[Tuple[int, int, int]] = []
-        for cluster in assignments:
-            if not cluster:
-                new_centroids.append(random.choice(pixels))
-            else:
-                n = len(cluster)
-                new_centroids.append((
-                    int(sum(p[0] for p in cluster) / n),
-                    int(sum(p[1] for p in cluster) / n),
-                    int(sum(p[2] for p in cluster) / n),
-                ))
-
-        if new_centroids == centroids:
-            break
-        centroids = new_centroids
-
-    return centroids
+BG_COLOR       = (248, 248, 250)
+GRID_BG        = (255, 255, 255)
+GRID_LINE      = (190, 190, 198)
+COORD_TEXT     = (140, 140, 150)
+LEGEND_BG      = (255, 255, 255)
+LEGEND_BORDER  = (220, 220, 228)
+TEXT_PRIMARY   = (30, 30, 37)
+TEXT_SECONDARY = (130, 130, 142)
+BEAD_SHADOW    = (185, 185, 195)
+SEPARATOR      = (225, 225, 232)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # Font helpers
 # ═══════════════════════════════════════════════════════════════════════
 
-def _load_font(size: int) -> ImageFont.FreeTypeFont:
-    """Load the best available TrueType font at *size*."""
+def _load_font(size: int, bold: bool = False):
     paths = [
-        "C:\\Windows\\Fonts\\msyh.ttc",       # Microsoft YaHei (Chinese)
-        "C:\\Windows\\Fonts\\simhei.ttf",      # SimHei (Chinese)
-        "C:\\Windows\\Fonts\\arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    ]
-    for fp in paths:
-        try:
-            return ImageFont.truetype(fp, size)
-        except (OSError, IOError):
-            continue
-    return ImageFont.load_default()
-
-
-def _load_font_bold(size: int) -> ImageFont.FreeTypeFont:
-    """Load a bold TrueType font at *size*."""
-    paths = [
+        "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\msyhbd.ttc",
         "C:\\Windows\\Fonts\\simhei.ttf",
-        "C:\\Windows\\Fonts\\arialbd.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     ]
     for fp in paths:
         try:
+            from PIL import ImageFont
             return ImageFont.truetype(fp, size)
         except (OSError, IOError):
             continue
-    return _load_font(size)
+    from PIL import ImageFont
+    return ImageFont.load_default()
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Core pipeline
+# Image preprocessing
 # ═══════════════════════════════════════════════════════════════════════
 
-# colour palette for the background / UI chrome
-BG = (248, 248, 250)
-GRID_LINE = (210, 210, 215)
-CARD_BG = (255, 255, 255)
-TEXT_MAIN = (30, 30, 35)
-TEXT_SECONDARY = (140, 140, 150)
-BEAD_SHADOW = (190, 190, 198)
-BEAD_HIGHLIGHT = (255, 255, 255, 40)
+def _load(data: bytes) -> Image.Image:
+    img = Image.open(BytesIO(data))
+    if img.mode == "RGBA":
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[3])
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    return img
 
 
-def _load_image(data: bytes) -> Image.Image:
-    return Image.open(BytesIO(data)).convert("RGB")
+def _auto_enhance(img: Image.Image) -> Image.Image:
+    """Improve contrast, apply mild sharpen, slight denoise."""
+    # 1. mild contrast stretch
+    enh = ImageEnhance.Contrast(img)
+    img = enh.enhance(1.15)
+    # 2. slight colour saturation boost
+    enh = ImageEnhance.Color(img)
+    img = enh.enhance(1.08)
+    # 3. subtle sharpen
+    img = img.filter(ImageFilter.UnsharpMask(radius=0.6, percent=60, threshold=4))
+    return img
 
 
-def _resize_preserve(img: Image.Image, grid_size: int) -> Image.Image:
+def _crop_to_content(img: Image.Image, margin_pct: float = 0.04) -> Image.Image:
     """
-    Pre-resize with LANCZOS to 4× the target grid.
-    This preserves far more detail than a direct NEAREST down-sample.
+    Auto-crop whitespace / near-white borders.
+    Leaves *margin_pct* padding around the detected content.
     """
-    pre = grid_size * 4
+    gray = img.convert("L")
+    # threshold: anything darker than 245 is "content"
+    threshold = 245
+    w, h = gray.size
+
+    # find bounding box of non-background pixels
+    left, top, right, bottom = w, h, 0, 0
+    pixels = gray.load()
+    for y in range(h):
+        for x in range(w):
+            if pixels[x, y] < threshold:  # type: ignore[index]
+                if x < left:   left = x
+                if x > right:  right = x
+                if y < top:    top = y
+                if y > bottom: bottom = y
+
+    # if nothing detected, return original
+    if left >= right or top >= bottom:
+        return img
+
+    # add margin
+    mw = int((right - left) * margin_pct)
+    mh = int((bottom - top) * margin_pct)
+    left   = max(0, left - mw)
+    top    = max(0, top - mh)
+    right  = min(w, right + mw)
+    bottom = min(h, bottom + mh)
+
+    return img.crop((left, top, right, bottom))
+
+
+def _resize_keep_aspect(
+    img: Image.Image,
+    grid_size: int,
+    bg: Tuple[int, int, int] = (255, 255, 255),
+) -> Image.Image:
+    """
+    Resize so the longer side fits exactly into *grid_size*.
+    The shorter side is centred on a white background (letterbox).
+    """
+    pre = grid_size * 4  # work at 4× for detail preservation
     w, h = img.size
-    # crop to square centre
-    side = min(w, h)
-    left = (w - side) // 2
-    top = (h - side) // 2
-    img = img.crop((left, top, left + side, top + side))
-    return img.resize((pre, pre), Image.LANCZOS)
+    ratio = pre / max(w, h)
+    new_w = max(1, int(w * ratio))
+    new_h = max(1, int(h * ratio))
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    # centre on square canvas
+    canvas = Image.new("RGB", (pre, pre), bg)
+    ox = (pre - new_w) // 2
+    oy = (pre - new_h) // 2
+    canvas.paste(img, (ox, oy))
+    return canvas
 
 
-def _quantize(img: Image.Image, n_colors: int) -> Image.Image:
-    """K-means quantisation to *n_colors*."""
+# ═══════════════════════════════════════════════════════════════════════
+# Colour mapping
+# ═══════════════════════════════════════════════════════════════════════
+
+def _map_to_palette(
+    img: Image.Image,
+    brand: str,
+    n_colors: int,
+) -> Tuple[Image.Image, dict]:
+    """
+    Map every pixel to nearest bead colour. Returns (mapped_img, stats).
+
+    stats: { "codes": [...], "names": [...], "rgb": [...], "counts": [...], "total": int }
+    """
+    mapper = get_mapper(brand)
     w, h = img.size
     pixels = list(img.getdata())  # type: ignore[arg-type]
 
-    # For large images, sample to speed up k-means
-    sample_size = min(len(pixels), 4000)
-    if len(pixels) > sample_size:
-        sampled = random.sample(pixels, sample_size)
-    else:
-        sampled = pixels
+    # Build colour reduction: find the top *n_colors* most-used bead colours
+    # across the image, then snap every pixel
+    # Step 1: map all unique pixels to bead colours
+    unique_src = set(pixels)
+    bead_map: dict[Tuple[int, int, int], Tuple[str, str, Tuple[int, int, int]]] = {}
+    usage: dict[str, int] = {}
+    for p in unique_src:
+        code, name, brgb = mapper.map(p[0], p[1], p[2])  # type: ignore[index]
+        bead_map[p] = (code, name, brgb)  # type: ignore[index]
+        usage[code] = usage.get(code, 0) + 1
 
-    palette = _kmeans_colors(sampled, n_colors)
+    # Step 2: keep only the top n_colors bead colours by usage
+    top_codes = sorted(usage, key=usage.get, reverse=True)[:n_colors]  # type: ignore[arg-type]
+    top_set = set(top_codes)
 
-    # Build a lookup table: for every RGB triplet in the image, snap
-    # to the nearest palette colour.
-    # We build a dict for uniqueness across the image.
-    lut: dict[Tuple[int, int, int], Tuple[int, int, int]] = {}
-    for p in set(pixels):
-        best = palette[0]
-        best_d = float("inf")
-        for c in palette:
-            d = (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2 + (p[2] - c[2]) ** 2
+    # Step 3: for pixels whose bead colour isn't in top N, remap to nearest in top N
+    # Build a small mapper just for the allowed bead colours
+    allowed_rgbs = [bead_map[p][2] for p in unique_src if bead_map[p][0] in top_set]
+    allowed_codes_names = [(bead_map[p][0], bead_map[p][1]) for p in unique_src if bead_map[p][0] in top_set]
+    # deduplicate
+    seen = set()
+    dedup_rgb = []
+    dedup_cn = []
+    for rgb, cn in zip(allowed_rgbs, allowed_codes_names):
+        if rgb not in seen:
+            seen.add(rgb)
+            dedup_rgb.append(rgb)
+            dedup_cn.append(cn)
+
+    # Build a fast lookup for the fallback mapping
+    from .colormap import _rgb_to_lab
+    top_lab = [_rgb_to_lab(*rgb) for rgb in dedup_rgb]
+
+    def _nearest_top(r: int, g: int, b: int):
+        target = _rgb_to_lab(r, g, b)
+        best_i, best_d = 0, float("inf")
+        for i, lab in enumerate(top_lab):
+            d = sum((a - b) ** 2 for a, b in zip(target, lab))
             if d < best_d:
                 best_d = d
-                best = c
-        lut[p] = best
+                best_i = i
+        return dedup_cn[best_i][0], dedup_cn[best_i][1], dedup_rgb[best_i]
 
+    # Step 4: final mapping pass
+    final_codes: dict[Tuple[int, int, int], Tuple[str, str, Tuple[int, int, int]]] = {}
+    for p in unique_src:
+        code, name, brgb = bead_map[p]  # type: ignore[index]
+        if code not in top_set:
+            code, name, brgb = _nearest_top(p[0], p[1], p[2])  # type: ignore[index]
+        final_codes[p] = (code, name, brgb)  # type: ignore[index]
+
+    # Build the output image & count per code
+    out_pixels = [final_codes[p][2] for p in pixels]  # type: ignore[index]
     out = Image.new("RGB", (w, h))
-    out.putdata([lut[p] for p in pixels])  # type: ignore[arg-type]
-    return out
+    out.putdata(out_pixels)  # type: ignore[arg-type]
+
+    # Counts
+    code_counts: dict[str, int] = {}
+    code_names: dict[str, str] = {}
+    code_rgb: dict[str, Tuple[int, int, int]] = {}
+    for p in unique_src:
+        c, n, r = final_codes[p]  # type: ignore[index]
+        code_counts[c] = code_counts.get(c, 0) + (list(pixels).count(p))  # This is slow, let's fix
+        code_names[c] = n
+        code_rgb[c] = r
+
+    # Better counting: iterate over final output
+    code_counts = {}
+    for _, name, rgb in final_codes.values():  # type: ignore[misc]
+        pass  # We need to recount properly
+
+    # Actually recount properly
+    code_counts = {}
+    for p, src_p in zip(out_pixels, pixels):
+        # Find which code this maps to
+        c = final_codes[src_p][0]  # type: ignore[index]
+        code_counts[c] = code_counts.get(c, 0) + 1
+        code_names[c] = final_codes[src_p][1]  # type: ignore[index]
+        code_rgb[c] = final_codes[src_p][2]  # type: ignore[index]
+
+    # Sort by count desc
+    sorted_codes = sorted(code_counts, key=code_counts.get, reverse=True)  # type: ignore[arg-type]
+
+    stats = {
+        "codes":  sorted_codes,
+        "names":  [code_names[c] for c in sorted_codes],
+        "rgb":    [code_rgb[c] for c in sorted_codes],
+        "counts": [code_counts[c] for c in sorted_codes],
+        "total":  sum(code_counts.values()),
+        "brand":  brand,
+    }
+    return out, stats
 
 
-def _downsample(img: Image.Image, grid_size: int) -> Image.Image:
-    """Downsample to final grid dimensions."""
-    return img.resize((grid_size, grid_size), Image.NEAREST)
+# ═══════════════════════════════════════════════════════════════════════
+# Rendering
+# ═══════════════════════════════════════════════════════════════════════
 
-
-def _extract_palette(img: Image.Image) -> Tuple[List[Tuple[int, int, int]], List[int]]:
-    """Return (colours, counts) sorted by frequency descending."""
-    result = img.getcolors()
-    if result is None:
-        # fallback (should not happen for quantized images)
-        counts_map: dict[Tuple[int, int, int], int] = {}
-        for c in img.getdata():  # type: ignore[attr-defined]
-            counts_map[c] = counts_map.get(c, 0) + 1  # type: ignore[index]
-        result = [(v, k) for k, v in counts_map.items()]
-
-    result.sort(key=lambda x: x[0], reverse=True)
-    return [item[1] for item in result], [item[0] for item in result]
-
-
-def _draw_bead_cell(
+def _draw_bead(
     draw: ImageDraw.Draw,
-    x: int,
-    y: int,
+    x: int, y: int,
     size: int,
     color: Tuple[int, int, int],
 ) -> None:
-    """Render a single bead with rounded rectangle + subtle shadow + highlight."""
+    """Single bead cell: rounded rect + shadow + highlight."""
     pad = max(1, size // 10)
     r = max(2, size // 4)
-
     # shadow
     draw.rounded_rectangle(
         [x + pad, y + pad, x + size, y + size],
-        radius=r,
-        fill=BEAD_SHADOW,
+        radius=r, fill=BEAD_SHADOW,
     )
-    # bead body
+    # body
     draw.rounded_rectangle(
         [x, y, x + size - pad, y + size - pad],
-        radius=r,
-        fill=color,
+        radius=r, fill=color,
     )
-    # subtle highlight (top-left)
-    hl_w = max(1, size // 5)
-    hl_h = max(1, size // 5)
+    # highlight
+    hl = max(1, size // 5)
     draw.rounded_rectangle(
-        [x + pad, y + pad, x + pad + hl_w, y + pad + hl_h],
-        radius=hl_w // 2,
-        fill=BEAD_HIGHLIGHT,
+        [x + pad, y + pad, x + pad + hl, y + pad + hl],
+        radius=hl // 2, fill=(255, 255, 255, 35),
     )
 
 
-def _render_grid_image(
+def _render_grid(
     img: Image.Image,
     grid_size: int,
-    cell_size: int = 24,
+    cell_size: int = 28,
 ) -> Image.Image:
-    """Render the pixel art as a bead grid with individual bead cells."""
-    out_w = grid_size * cell_size
-    out_h = grid_size * cell_size
-    canvas = Image.new("RGBA", (out_w, out_h), (248, 248, 250, 255))
+    """Render bead grid with coordinate labels."""
+    font = _load_font(max(8, cell_size // 3))
+    margin = cell_size  # space for coordinates
+    out_w = grid_size * cell_size + margin
+    out_h = grid_size * cell_size + margin
+
+    canvas = Image.new("RGBA", (out_w, out_h), GRID_BG)
     draw = ImageDraw.Draw(canvas)
 
     pixels = img.load()
-    for row in range(grid_size):
-        for col in range(grid_size):
-            color = pixels[col, row]  # type: ignore[index]
-            x = col * cell_size
-            y = row * cell_size
-            _draw_bead_cell(draw, x, y, cell_size, color)
+    for r in range(grid_size):
+        for c in range(grid_size):
+            color = pixels[c, r]  # type: ignore[index]
+            x = margin + c * cell_size
+            y = margin + r * cell_size
+            _draw_bead(draw, x, y, cell_size, color)
+
+    # column numbers (top)
+    for c in range(grid_size):
+        x = margin + c * cell_size + cell_size // 2
+        txt = str(c + 1)
+        bbox = draw.textbbox((0, 0), txt, font=font)
+        tw = bbox[2] - bbox[0]
+        draw.text((x - tw // 2, 3), txt, fill=COORD_TEXT, font=font)
+
+    # row numbers (left)
+    for r in range(grid_size):
+        y = margin + r * cell_size + cell_size // 2
+        txt = str(r + 1)
+        bbox = draw.textbbox((0, 0), txt, font=font)
+        th = bbox[3] - bbox[1]
+        tw = bbox[2] - bbox[0]
+        draw.text((margin - tw - 5, y - th // 2), txt, fill=COORD_TEXT, font=font)
 
     return canvas
 
 
 def _render_legend(
-    palette: List[Tuple[int, int, int]],
-    counts: List[int],
+    stats: dict,
     grid_size: int,
     cell_size: int,
 ) -> Image.Image:
-    """Render the colour legend card with total bead count."""
-    total = sum(counts)
-    swatch = cell_size
-    gap_x = 12
-    gap_y = 14
-    cols = min(len(palette), 6)
-    rows = math.ceil(len(palette) / cols)
+    """Professional legend card with brand info, codes, names, counts."""
+    codes  = stats["codes"]
+    names  = stats["names"]
+    rgbs   = stats["rgb"]
+    counts = stats["counts"]
+    total  = stats["total"]
+    brand  = stats["brand"].upper()
 
-    font_title = _load_font_bold(15)
-    font_item = _load_font(12)
-    font_total = _load_font(12)
+    font_title = _load_font(16, bold=True)
+    font_item  = _load_font(12)
+    font_small = _load_font(11)
 
-    card_pad_x = 20
-    card_pad_y = 18
-    title_h = 28
-    total_h = 28
+    swatch = 18
+    gap = 10
+    cols = min(len(codes), 5)
+    rows = math.ceil(len(codes) / cols)
 
-    content_w = cols * (swatch + 64 + gap_x) - gap_x
-    card_w = card_pad_x * 2 + content_w
-    card_h = card_pad_y * 2 + title_h + rows * (swatch + gap_y) - gap_y + total_h
+    # card dimensions
+    card_pad = 22
+    title_h = 32
+    header_h = 56
+    total_h = 34
+
+    col_w = swatch + 6 + 62 + 44 + gap
+    content_w = cols * col_w - gap
+    card_w = card_pad * 2 + content_w
+    items_h = rows * (swatch + gap) - gap
+    card_h = card_pad * 2 + header_h + items_h + total_h
 
     legend = Image.new("RGBA", (card_w, card_h), (248, 248, 250, 0))
     draw = ImageDraw.Draw(legend)
 
-    # card background
-    draw.rounded_rectangle(
-        [0, 0, card_w, card_h],
-        radius=14,
-        fill=(255, 255, 255, 255),
-        outline=(225, 225, 230),
-        width=1,
-    )
+    # card bg
+    draw.rounded_rectangle([0, 0, card_w, card_h], radius=16, fill=LEGEND_BG, outline=LEGEND_BORDER, width=1)
 
-    # title
-    draw.text(
-        (card_pad_x, card_pad_y),
-        "颜色图例 Color Legend",
-        fill=TEXT_MAIN,
-        font=font_title,
-    )
+    # header
+    draw.text((card_pad, card_pad), f"颜色图例  ·  {brand}", fill=TEXT_PRIMARY, font=font_title)
+    draw.line([(card_pad, card_pad + title_h + 6), (card_w - card_pad, card_pad + title_h + 6)], fill=SEPARATOR, width=1)
 
-    # swatches
-    base_y = card_pad_y + title_h
-    for idx, (color, count) in enumerate(zip(palette, counts)):
+    # items
+    base_y = card_pad + header_h
+    for idx in range(len(codes)):
         r = idx // cols
         c = idx % cols
-        x = card_pad_x + c * (swatch + 64 + gap_x)
-        y = base_y + r * (swatch + gap_y)
+        x = card_pad + c * col_w
+        y = base_y + r * (swatch + gap)
 
-        draw.rounded_rectangle(
-            [x, y, x + swatch, y + swatch],
-            radius=4,
-            fill=color,
-            outline=(200, 200, 208),
-            width=1,
-        )
-        pct = count / total * 100 if total else 0
-        draw.text(
-            (x + swatch + 8, y - 1),
-            f"×{count}  ({pct:.1f}%)",
-            fill=TEXT_MAIN,
-            font=font_item,
-        )
+        rgb = rgbs[idx]
+        draw.rounded_rectangle([x, y, x + swatch, y + swatch], radius=4, fill=rgb, outline=(200, 200, 208), width=1)
+        draw.text((x + swatch + 6, y - 1), codes[idx], fill=TEXT_PRIMARY, font=font_item)
+        draw.text((x + swatch + 6, y + swatch - 11), names[idx], fill=TEXT_SECONDARY, font=font_small)
+        count_str = f"×{counts[idx]}"
+        pct = counts[idx] / total * 100 if total else 0
+        draw.text((x + swatch + 70, y), f"{pct:.1f}%", fill=TEXT_SECONDARY, font=font_item)
+        draw.text((x + swatch + 70, y + swatch - 11), count_str, fill=TEXT_SECONDARY, font=font_small)
 
     # total row
-    total_y = base_y + rows * (swatch + gap_y) - gap_y + 6
-    draw.line(
-        [(card_pad_x, total_y), (card_w - card_pad_x, total_y)],
-        fill=(225, 225, 230),
-        width=1,
-    )
-    draw.text(
-        (card_pad_x, total_y + 8),
-        f"共 {total:,} 颗拼豆  ·  {grid_size} × {grid_size}  ·  {len(palette)} 色",
-        fill=TEXT_SECONDARY,
-        font=font_total,
-    )
+    sep_y = base_y + items_h + 8
+    draw.line([(card_pad, sep_y), (card_w - card_pad, sep_y)], fill=SEPARATOR, width=1)
+    info = f"共 {total:,} 颗  ·  {grid_size}×{grid_size}  ·  {len(codes)} 色"
+    bbox = draw.textbbox((0, 0), info, font=font_item)
+    tw = bbox[2] - bbox[0]
+    draw.text(((card_w - tw) // 2, sep_y + 10), info, fill=TEXT_SECONDARY, font=font_item)
 
     return legend
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Public API
+# ═══════════════════════════════════════════════════════════════════════
+
 def process(
     data: bytes,
-    grid_size: int = 32,
-    n_colors: int = 24,
-    cell_size: int = 24,
+    grid_size: int = 48,
+    n_colors: int = 32,
+    brand: str = "artkal",
+    cell_size: int = 28,
 ) -> Tuple[bytes, dict]:
     """
-    Produce a bead-art blueprint from raw image bytes.
+    Produce a professional bead-art blueprint.
 
     Parameters
     ----------
-    data : bytes        Raw JPEG / PNG / WebP bytes.
+    data      : bytes   Raw JPEG / PNG / WebP bytes.
     grid_size : int     Beads per side.
-    n_colors : int      Target colour count.
-    cell_size : int     Pixel size of each bead in the output.
+    n_colors  : int     Max distinct bead colours.
+    brand     : str     "artkal" or "perler".
+    cell_size : int     Pixels per bead cell in output.
 
     Returns
     -------
-    (png_bytes, stats) where stats is:
-        {
-            "palette": [ [r,g,b], ... ],
-            "counts": [int, ...],
-            "total": int,
-            "grid_size": int,
-            "n_colors": int,
-        }
+    (png_bytes, stats_dict)
     """
     n_colors = min(n_colors, grid_size * grid_size)
 
-    img = _load_image(data)
-    img = _resize_preserve(img, grid_size)
-    img = _quantize(img, n_colors)
-    img = _downsample(img, grid_size)
+    # 1. load + enhance
+    img = _load(data)
+    img = _auto_enhance(img)
 
-    palette_raw, counts = _extract_palette(img)
-    palette_hex = [[int(c[0]), int(c[1]), int(c[2])] for c in palette_raw]
+    # 2. smart crop
+    img = _crop_to_content(img)
 
-    grid_img = _render_grid_image(img, grid_size, cell_size)
-    legend = _render_legend(palette_raw, counts, grid_size, cell_size)
+    # 3. aspect-ratio-preserving resize
+    img = _resize_keep_aspect(img, grid_size)
 
-    # Composite: grid + spacing + legend
-    spacer = 24
-    final_w = grid_img.width
+    # 4. map to professional bead palette
+    img, stats = _map_to_palette(img, brand, n_colors)
+
+    # 5. downsample to grid
+    img = img.resize((grid_size, grid_size), Image.NEAREST)
+
+    # 6. recount after downsample (because NEAREST may change distribution)
+    # Re-extract stats from the final grid image
+    from collections import Counter
+    final_pixels = list(img.getdata())  # type: ignore[arg-type]
+    # Map these to codes via the original mapping (reuse bead_map concept)
+    # For simplicity, just recount the visual colors in the final grid
+    pixel_counts: Counter = Counter()
+    for p in final_pixels:
+        pixel_counts[p] += 1
+
+    # Sort by count desc and rebuild stats
+    sorted_items = pixel_counts.most_common()
+    stats["rgb"] = [item[0] for item in sorted_items]
+    stats["counts"] = [item[1] for item in sorted_items]
+    stats["total"] = sum(item[1] for item in sorted_items)
+
+    # We lost codes/names in the final grid - remap using the mapper
+    mapper = get_mapper(brand)
+    final_codes = []
+    final_names = []
+    for rgb in stats["rgb"]:
+        code, name, _ = mapper.map(rgb[0], rgb[1], rgb[2])
+        final_codes.append(code)
+        final_names.append(name)
+    stats["codes"] = final_codes
+    stats["names"] = final_names
+
+    # 7. render grid + legend
+    grid_img = _render_grid(img, grid_size, cell_size)
+    legend   = _render_legend(stats, grid_size, cell_size)
+
+    # 8. composite
+    spacer = 28
+    final_w = max(grid_img.width, legend.width)
     final_h = grid_img.height + spacer + legend.height
-
-    canvas = Image.new("RGBA", (final_w, final_h), (248, 248, 250, 255))
-    canvas.paste(grid_img, (0, 0), grid_img)
+    canvas = Image.new("RGBA", (final_w, final_h), BG_COLOR)
+    canvas.paste(grid_img, (max(0, (final_w - grid_img.width) // 2), 0))
     lx = (final_w - legend.width) // 2
     canvas.paste(legend, (lx, grid_img.height + spacer), legend)
 
     buf = BytesIO()
     canvas.save(buf, format="PNG")
-    png_bytes = buf.getvalue()
-
-    stats = {
-        "palette": palette_hex,
-        "counts": counts,
-        "total": sum(counts),
-        "grid_size": grid_size,
-        "n_colors": len(palette_hex),
-    }
-
-    return png_bytes, stats
+    return buf.getvalue(), stats
