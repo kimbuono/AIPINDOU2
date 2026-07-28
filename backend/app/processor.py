@@ -385,6 +385,8 @@ def process(
         stats["codes"].append(c)
         stats["names"].append(n)
     stats["brand"] = brand
+    stats["grid_size"] = grid_size
+    stats["n_colors"] = len(stats["codes"])
 
     # 7-8. Render
     grid_img = _render_grid(img, grid_size, cell_size)
