@@ -37,10 +37,12 @@ const API_URL =
 
 // ── warm-up: ping backend on page load to wake it from Render sleep ──
 function warmUpBackend() {
-  fetch(`${API_URL}/api/health`, { method: "GET", signal: AbortSignal.timeout(5000) })
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), 5000);
+  fetch(`${API_URL}/api/health`, { method: "GET", signal: ctrl.signal })
     .then(r => r.json().catch(() => ({})))
-    .then(d => { if (d.version) console.log("[爱拼豆] 后端已就绪 v" + d.version); })
-    .catch(() => { /* silent — backend will wake on generate request */ });
+    .then(d => { if (d.version) console.log("[爱拼豆] 后端就绪 v" + d.version); })
+    .catch(() => { /* silent */ });
 }
 
 // ── page ───────────────────────────────────────────────────────────────
@@ -93,56 +95,70 @@ export default function Home() {
     setBlueprintUrl(null);
     setStats(null);
 
-    try {
-      const fd = new FormData();
-      fd.append("image", file);
-      fd.append("size", String(gridSize));
-      fd.append("colors", String(colorCount));
-      fd.append("brand", brand);
+    const fd = new FormData();
+    fd.append("image", file);
+    fd.append("size", String(gridSize));
+    fd.append("colors", String(colorCount));
+    fd.append("brand", brand);
 
-      // Long timeout for Render cold start (free tier sleep → 30-60s wake)
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120_000);
+    // Try up to 2 times — first attempt wakes Render from sleep,
+    // second attempt uses the now-warm backend.
+    const maxRetries = 2;
+    let lastErr: string | null = null;
 
-      let res: Response;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        res = await fetch(`${API_URL}/api/generate?format=json`, {
+        // Timeout: 75s per attempt (compatible with all mobile browsers)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 75_000);
+
+        const res = await fetch(`${API_URL}/api/generate?format=json`, {
           method: "POST",
           body: fd,
           signal: controller.signal,
         });
-      } catch (fetchErr) {
         clearTimeout(timeoutId);
-        if ((fetchErr as Error).name === "AbortError") {
-          throw new Error("生成超时，服务器可能正在启动中，请稍后重试");
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({})) as { detail?: string };
+          throw new Error(body.detail || `服务器错误（${res.status}）`);
         }
-        throw new Error("网络连接失败，请检查网络后重试");
-      }
-      clearTimeout(timeoutId);
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { detail?: string };
-        throw new Error(body.detail || `服务器错误（${res.status}）`);
-      }
+        const data = await res.json();
+        const imgBlob = base64ToBlob(data.image_base64, "image/png");
+        setBlueprintUrl(URL.createObjectURL(imgBlob));
+        setStats({
+          codes: data.codes,
+          names: data.names,
+          rgb: data.rgb,
+          counts: data.counts,
+          total: data.total,
+          grid_size: data.grid_size,
+          n_colors: data.n_colors,
+          brand: data.brand,
+        });
+        setAppState("done");
+        return; // success — exit retry loop
+      } catch (err) {
+        const isAbort = (err as Error).name === "AbortError";
+        const msg = isAbort
+          ? "请求超时，服务器正在启动中（约需 30 秒），正在重试…"
+          : "服务器正在预热中，即将自动重试…";
 
-      const data = await res.json();
-      const imgBlob = base64ToBlob(data.image_base64, "image/png");
-      setBlueprintUrl(URL.createObjectURL(imgBlob));
-      setStats({
-        codes: data.codes,
-        names: data.names,
-        rgb: data.rgb,
-        counts: data.counts,
-        total: data.total,
-        grid_size: data.grid_size,
-        n_colors: data.n_colors,
-        brand: data.brand,
-      });
-      setAppState("done");
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "生成失败，请重试");
-      setAppState("error");
+        lastErr = isAbort ? "请求超时，请稍后重试" : "服务器响应异常，请稍后重试";
+
+        if (attempt < maxRetries) {
+          // Show progress to user, then retry after delay
+          setErrorMessage(msg);
+          await new Promise(r => setTimeout(r, 12_000)); // wait 12s for Render to wake
+          setErrorMessage(null);
+        }
+      }
     }
+
+    // All retries exhausted
+    setErrorMessage(lastErr || "生成失败，请检查网络后重试");
+    setAppState("error");
   };
 
   const handleDownload = () => {
