@@ -26,7 +26,12 @@ export default function GenerateButton({ disabled, loading, onClick }: GenerateB
       {loading ? (
         <>
           <Spinner className="w-5 h-5 text-neutral-400" />
-          <span className="text-neutral-500">正在生成拼豆图纸…</span>
+          <span className="text-neutral-500">
+            正在生成拼豆图纸…
+            <span className="block text-[12px] text-neutral-400 font-normal mt-0.5">
+              首次生成可能需要等待服务器启动（约 30 秒）
+            </span>
+          </span>
         </>
       ) : disabled ? (
         "请先上传图片"

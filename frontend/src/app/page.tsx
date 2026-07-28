@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import Hero from "@/components/Hero";
 import UploadZone from "@/components/UploadZone";
@@ -35,6 +35,14 @@ const API_URL =
     ? process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
     : "http://localhost:8000";
 
+// ── warm-up: ping backend on page load to wake it from Render sleep ──
+function warmUpBackend() {
+  fetch(`${API_URL}/api/health`, { method: "GET", signal: AbortSignal.timeout(5000) })
+    .then(r => r.json().catch(() => ({})))
+    .then(d => { if (d.version) console.log("[爱拼豆] 后端已就绪 v" + d.version); })
+    .catch(() => { /* silent — backend will wake on generate request */ });
+}
+
 // ── page ───────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -54,6 +62,9 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const isLanding = appState === "idle" || appState === "ready";
+
+  // ── warm up backend on first visit ──────────────────────────────
+  useEffect(() => { warmUpBackend(); }, []);
 
   // ── handlers ─────────────────────────────────────────────────────
 
@@ -89,10 +100,25 @@ export default function Home() {
       fd.append("colors", String(colorCount));
       fd.append("brand", brand);
 
-      const res = await fetch(`${API_URL}/api/generate?format=json`, {
-        method: "POST",
-        body: fd,
-      });
+      // Long timeout for Render cold start (free tier sleep → 30-60s wake)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120_000);
+
+      let res: Response;
+      try {
+        res = await fetch(`${API_URL}/api/generate?format=json`, {
+          method: "POST",
+          body: fd,
+          signal: controller.signal,
+        });
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        if ((fetchErr as Error).name === "AbortError") {
+          throw new Error("生成超时，服务器可能正在启动中，请稍后重试");
+        }
+        throw new Error("网络连接失败，请检查网络后重试");
+      }
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { detail?: string };
