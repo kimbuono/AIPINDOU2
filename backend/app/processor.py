@@ -1,26 +1,13 @@
 """
 V3.1 Image processor — fast, professional bead-art blueprint generation.
-
-Key optimisation: use Pillow's C-level quantize() to reduce the pre-resized
-image to ≤256 palette entries, then map only the *palette* (not every pixel)
-to bead colours via Lab KD-tree. This cuts runtime from ~20s to <1s.
-
-Pipeline:
-  1. Load & enhance (contrast, sharpen)
-  2. Smart crop to content
-  3. Aspect-ratio-preserving resize (4× target)
-  4. Fast quantise to intermediate palette (Pillow C)
-  5. Map intermediate palette → bead palette (Lab KD-tree, ≤256 lookups)
-  6. Top-N colour selection + remap fallback
-  7. Apply bead palette to image
-  8. Downsample to grid
-  9. Render grid + legend
-  10. Composite & export PNG
 """
 
 from __future__ import annotations
 
+import logging
 import math
+import sys
+import traceback
 from collections import Counter
 from io import BytesIO
 from typing import List, Tuple
@@ -28,6 +15,8 @@ from typing import List, Tuple
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 
 from .colormap import get_mapper
+
+logger = logging.getLogger("aipindou.processor")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -339,67 +328,103 @@ def process(
     brand: str = "artkal",
     cell_size: int = 28,
 ) -> Tuple[bytes, dict]:
-    """
-    Produce a professional bead-art blueprint.
-
-    Parameters
-    ----------
-    data      : bytes   Raw image bytes.
-    grid_size : int     Beads per side (16/29/32/48/58/64).
-    n_colors  : int     Max bead colours (16/24/32/48/64/80/96/128/256).
-    brand     : str     "artkal" or "perler".
-    cell_size : int     Pixels per bead cell.
-
-    Returns
-    -------
-    (png_bytes, stats_dict)
-    """
     n_colors = min(n_colors, grid_size * grid_size)
 
-    # 1-3. Load → enhance → crop → resize
-    img = _load(data)
-    img = _enhance(img)
-    img = _crop(img)
-    img = _resize_keep_aspect(img, grid_size)
+    try:
+        logger.info(f"[1/9] 加载图片: {len(data):,} bytes")
+        img = _load(data)
+        logger.info(f"[1/9] 加载成功: {img.size}, mode={img.mode}")
+    except Exception:
+        logger.error(f"[1/9] 加载失败:\n{traceback.format_exc()}")
+        raise
 
-    # 4-5. Fast quantize → map palette to bead colours
-    img, stats = _map_to_beads(img, brand, n_colors)
+    try:
+        logger.info(f"[2/9] 图像增强中...")
+        img = _enhance(img)
+        logger.info(f"[2/9] 增强完成: {img.size}")
+    except Exception:
+        logger.error(f"[2/9] 增强失败:\n{traceback.format_exc()}")
+        raise
 
-    # 6. Downsample to grid
-    img = img.resize((grid_size, grid_size), Image.NEAREST)
+    try:
+        logger.info(f"[3/9] 裁剪空白区域...")
+        img = _crop(img)
+        logger.info(f"[3/9] 裁剪完成: {img.size}")
+    except Exception:
+        logger.error(f"[3/9] 裁剪失败:\n{traceback.format_exc()}")
+        raise
 
-    # Recount after downsample for accurate stats
-    from collections import Counter as _Counter
-    cnt: _Counter = _Counter()
-    for p in img.getdata():  # type: ignore[arg-type]
-        cnt[p] += 1
-    sorted_items = cnt.most_common()
-    mapper = get_mapper(brand)
-    stats["rgb"]    = [list(it[0]) for it in sorted_items]
-    stats["counts"]  = [it[1] for it in sorted_items]
-    stats["total"]   = sum(it[1] for it in sorted_items)
-    stats["codes"]   = []
-    stats["names"]   = []
-    for rgb in stats["rgb"]:
-        c, n, _ = mapper.map(rgb[0], rgb[1], rgb[2])
-        stats["codes"].append(c)
-        stats["names"].append(n)
-    stats["brand"] = brand
-    stats["grid_size"] = grid_size
-    stats["n_colors"] = len(stats["codes"])
+    try:
+        logger.info(f"[4/9] 等比缩放至 {grid_size}...")
+        img = _resize_keep_aspect(img, grid_size)
+        logger.info(f"[4/9] 缩放完成: {img.size}")
+    except Exception:
+        logger.error(f"[4/9] 缩放失败:\n{traceback.format_exc()}")
+        raise
 
-    # 7-8. Render
-    grid_img = _render_grid(img, grid_size, cell_size)
-    legend   = _render_legend(stats, grid_size, cell_size)
+    try:
+        logger.info(f"[5/9] 色彩量化+映射品牌={brand} 上限={n_colors}...")
+        img, stats = _map_to_beads(img, brand, n_colors)
+        logger.info(f"[5/9] 映射完成: {len(stats.get('codes',[]))} 种颜色")
+    except Exception:
+        logger.error(f"[5/9] 颜色映射失败:\n{traceback.format_exc()}")
+        raise
 
-    # 9. Composite
-    spacer = 28
-    fw = max(grid_img.width, legend.width)
-    fh = grid_img.height + spacer + legend.height
-    canvas = Image.new("RGBA", (fw, fh), BG_COLOR)
-    canvas.paste(grid_img, ((fw - grid_img.width)//2, 0))
-    canvas.paste(legend, ((fw - legend.width)//2, grid_img.height + spacer), legend)
+    try:
+        logger.info(f"[6/9] 降采样至目标网格...")
+        img = img.resize((grid_size, grid_size), Image.NEAREST)
+        logger.info(f"[6/9] 降采样完成: {img.size}")
+    except Exception:
+        logger.error(f"[6/9] 降采样失败:\n{traceback.format_exc()}")
+        raise
 
-    buf = BytesIO()
-    canvas.save(buf, format="PNG")
-    return buf.getvalue(), stats
+    try:
+        logger.info(f"[7/9] 统计颜色数据...")
+        from collections import Counter as _Counter
+        cnt: _Counter = _Counter()
+        for p in img.getdata():
+            cnt[p] += 1
+        sorted_items = cnt.most_common()
+        mapper = get_mapper(brand)
+        stats["rgb"]    = [list(it[0]) for it in sorted_items]
+        stats["counts"]  = [it[1] for it in sorted_items]
+        stats["total"]   = sum(it[1] for it in sorted_items)
+        stats["codes"]   = []
+        stats["names"]   = []
+        for rgb_item in stats["rgb"]:
+            c, n, _ = mapper.map(rgb_item[0], rgb_item[1], rgb_item[2])
+            stats["codes"].append(c)
+            stats["names"].append(n)
+        stats["brand"] = brand
+        stats["grid_size"] = grid_size
+        stats["n_colors"] = len(stats["codes"])
+        logger.info(f"[7/9] 统计完成: {stats['total']}颗, {stats['n_colors']}色")
+    except Exception:
+        logger.error(f"[7/9] 统计失败:\n{traceback.format_exc()}")
+        raise
+
+    try:
+        logger.info(f"[8/9] 渲染图纸+图例...")
+        grid_img = _render_grid(img, grid_size, cell_size)
+        legend   = _render_legend(stats, grid_size, cell_size)
+        logger.info(f"[8/9] 渲染完成: grid={grid_img.size}, legend={legend.size}")
+    except Exception:
+        logger.error(f"[8/9] 渲染失败:\n{traceback.format_exc()}")
+        raise
+
+    try:
+        logger.info(f"[9/9] 合成+编码PNG...")
+        spacer = 28
+        fw = max(grid_img.width, legend.width)
+        fh = grid_img.height + spacer + legend.height
+        canvas = Image.new("RGBA", (fw, fh), BG_COLOR)
+        canvas.paste(grid_img, ((fw - grid_img.width)//2, 0))
+        canvas.paste(legend, ((fw - legend.width)//2, grid_img.height + spacer), legend)
+        buf = BytesIO()
+        canvas.save(buf, format="PNG")
+        result = buf.getvalue()
+        logger.info(f"[9/9] 完成: PNG {len(result):,} bytes, {fw}x{fh}")
+        return result, stats
+    except Exception:
+        logger.error(f"[9/9] 合成失败:\n{traceback.format_exc()}")
+        raise

@@ -117,6 +117,7 @@ async def generate(
     # ── 处理 ─────────────────────────────────────────────────────
     try:
         t1 = time.time()
+        logger.info(f"开始处理: size={size} colors={colors} brand={brand}")
         png_bytes, stats = process(
             data, grid_size=size, n_colors=colors, brand=brand.lower()
         )
@@ -126,9 +127,11 @@ async def generate(
             f"PNG {len(png_bytes):,}bytes in {elapsed:.1f}s"
         )
     except Exception as exc:
-        logger.error(f"处理失败: {exc}\n{traceback.format_exc()}")
+        tb = traceback.format_exc()
+        logger.error(f"处理失败:\n{tb}")
         raise HTTPException(
-            500, ERROR_MESSAGES["processing_failed"].format(detail=str(exc))
+            500,
+            detail=f"图片处理失败: {exc}\n---\n{tb[-500:]}",
         )
 
     # ── 响应 ─────────────────────────────────────────────────────
