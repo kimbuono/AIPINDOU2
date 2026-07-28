@@ -25,11 +25,12 @@ app = FastAPI(
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────
-_cors_env = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-if _cors_env.strip() == "*":
-    ALLOWED_ORIGINS = ["*"]
-else:
-    ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
+# Explicit origins + no credentials = browser-compliant CORS
+_cors_env = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,https://frontend-hazel-gamma-65.vercel.app,https://frontend-jjiajy66-5340s-projects.vercel.app",
+)
+ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
