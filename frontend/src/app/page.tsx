@@ -54,8 +54,9 @@ export default function Home() {
 
   // config
   const [gridSize, setGridSize] = useState<GridSize>(48);
-  const [colorCount, setColorCount] = useState<ColorCount>(32);
+  const [colorCount, setColorCount] = useState<ColorCount>(48);
   const [brand, setBrand] = useState<Brand>("artkal");
+  const [dither, setDither] = useState(true);
 
   // result
   const [appState, setAppState] = useState<AppState>("idle");
@@ -101,6 +102,7 @@ export default function Home() {
       fd.append("size", String(gridSize));
       fd.append("colors", String(colorCount));
       fd.append("brand", brand);
+      fd.append("dither", dither ? "true" : "false");
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120_000);
@@ -223,9 +225,11 @@ export default function Home() {
                 gridSize={gridSize}
                 colorCount={colorCount}
                 brand={brand}
+                dither={dither}
                 onGridSizeChange={setGridSize}
                 onColorCountChange={setColorCount}
                 onBrandChange={setBrand}
+                onDitherChange={setDither}
               />
             </section>
           )}

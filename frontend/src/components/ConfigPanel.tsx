@@ -34,14 +34,16 @@ interface ConfigPanelProps {
   gridSize: GridSize;
   colorCount: ColorCount;
   brand: Brand;
+  dither: boolean;
   onGridSizeChange: (s: GridSize) => void;
   onColorCountChange: (c: ColorCount) => void;
   onBrandChange: (b: Brand) => void;
+  onDitherChange: (d: boolean) => void;
 }
 
 export default function ConfigPanel({
-  gridSize, colorCount, brand,
-  onGridSizeChange, onColorCountChange, onBrandChange,
+  gridSize, colorCount, brand, dither,
+  onGridSizeChange, onColorCountChange, onBrandChange, onDitherChange,
 }: ConfigPanelProps) {
   return (
     <div className="bg-white rounded-2xl border border-neutral-200 p-6 sm:p-7 space-y-7">
@@ -143,6 +145,37 @@ export default function ConfigPanel({
           自动选择最常用的 N 种颜色，其余映射到最近色
         </p>
       </fieldset>
+
+      {/* 抖动算法 */}
+      <fieldset>
+        <legend className="flex items-center gap-2 text-[13px] font-semibold text-neutral-500 uppercase tracking-wider mb-3.5">
+          高级选项
+        </legend>
+        <label className="flex items-center justify-between py-2 cursor-pointer">
+          <div>
+            <span className="text-[14px] font-medium text-neutral-700">Floyd-Steinberg 抖动</span>
+            <p className="text-[12px] text-neutral-400 mt-0.5">平滑颜色渐变，减少色块感</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onDitherChange(!dither)}
+            className={`
+              relative w-11 h-6 rounded-full transition-colors duration-200
+              ${dither ? "bg-blue-500" : "bg-neutral-300"}
+            `}
+          >
+            <span
+              className={`
+                absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
+                ${dither ? "translate-x-5.5" : "translate-x-0.5"}
+              `}
+              style={{ left: "1px" }}
+            />
+          </button>
+        </label>
+      </fieldset>
     </div>
   );
 }
+
+export type { GridSize, ColorCount, Brand };

@@ -12,7 +12,7 @@ from fastapi import FastAPI, File, Form, Query, UploadFile, HTTPException, Reque
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
-from .processor import process
+from .processor import process, recommend_size
 
 # ── 日志 ────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -61,20 +61,28 @@ async def health():
     return {"status": "ok", "version": "3.0.0", "brands": sorted(VALID_BRANDS)}
 
 
+@app.get("/api/recommend")
+async def recommend(w: int = 800, h: int = 600):
+    """根据图片尺寸推荐最佳网格大小。"""
+    size = recommend_size(w, h)
+    return {"grid_size": size, "image_width": w, "image_height": h}
+
+
 @app.post("/api/generate")
 async def generate(
     image: UploadFile = File(...),
     size: int = Form(48),
-    colors: int = Form(32),
+    colors: int = Form(48),
     brand: str = Form("artkal"),
-    format: str = Query("image", description="响应格式：image（PNG 图片）或 json（含统计信息）"),
+    dither: bool = Form(True),
+    format: str = Query("image"),
 ):
     """
-    上传图片，生成拼豆图纸。
+    上传图片，生成拼豆图纸（V5 CIEDE2000 + Floyd-Steinberg dithering）。
 
-    - **brand**：色卡品牌（artkal / perler）
-    - **format=image**（默认）：返回 PNG 图纸。
-    - **format=json**：返回 JSON，包含 base64 图纸 + 调色板 + 数量统计。
+    - **brand**: artkal / perler
+    - **dither**: Floyd-Steinberg 误差扩散（默认开启，平滑渐变）
+    - **format=image**: 返回 PNG；**format=json**: 返回 JSON + 统计
     """
     # ── 参数校验 ─────────────────────────────────────────────────
     if size not in VALID_SIZES:
@@ -120,7 +128,8 @@ async def generate(
         t1 = time.time()
         logger.info(f"开始处理: size={size} colors={colors} brand={brand}")
         png_bytes, stats = process(
-            data, grid_size=size, n_colors=colors, brand=brand.lower()
+            data, grid_size=size, n_colors=colors,
+            brand=brand.lower(), dither=dither,
         )
         elapsed = time.time() - t1
         logger.info(

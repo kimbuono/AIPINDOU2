@@ -119,12 +119,13 @@ def _map_to_beads(
     img: Image.Image,
     brand: str,
     n_colors: int,
+    dither: bool = False,
 ) -> Tuple[Image.Image, dict]:
     """
-    Map image colours to professional bead palette.
+    Map image colours to professional bead palette using CIEDE2000.
 
     Strategy: work at the PALETTE level (≤256 entries), not pixel level.
-    This is 100× faster than per-pixel Lab KD-tree mapping.
+    Optional Floyd-Steinberg dithering for smoother gradients.
     """
     mapper = get_mapper(brand)
 
@@ -167,7 +168,7 @@ def _map_to_beads(
     top_set = set(top_codes)
 
     # 5. Build fast fallback mapper for colours outside top-N
-    from .colormap import _rgb_to_lab
+    from .color_engine import rgb_to_lab as _rgb_to_lab
     top_rgbs: list = []
     top_info: list = []
     seen = set()
@@ -196,9 +197,19 @@ def _map_to_beads(
             code, name, brgb = nearest_in_top(src_color[0], src_color[1], src_color[2])
         final_lut[src_color] = brgb
 
-    # 7. Apply the LUT to produce the output image
+    # 7. Apply the LUT to produce the output image (with optional dithering)
     pixels = list(palette_img.getdata())  # type: ignore[arg-type]
-    out_pixels = [final_lut[p] for p in pixels]  # type: ignore[index]
+    if dither:
+        # Floyd-Steinberg over the selected bead palette
+        palette_rgbs = list(set(final_lut.values()))
+        from .color_engine import floyd_steinberg_dither
+        out_pixels = floyd_steinberg_dither(
+            [(p[0], p[1], p[2]) for p in pixels],
+            img.size[0], img.size[1],
+            palette_rgbs,
+        )
+    else:
+        out_pixels = [final_lut[p] for p in pixels]  # type: ignore[index]
     out = Image.new("RGB", img.size)
     out.putdata(out_pixels)  # type: ignore[arg-type]
 
@@ -321,12 +332,28 @@ def _render_legend(stats: dict, grid_size: int, cell_size: int) -> Image.Image:
 # Public API
 # ═══════════════════════════════════════════════════════════════════════
 
+def recommend_size(w: int, h: int, complexity: float = 0.5) -> int:
+    """
+    Auto-recommend grid size based on image dimensions and complexity.
+    Returns a valid grid size from the supported set.
+    """
+    pixels = w * h
+    # Base size from total pixels
+    base = int(math.sqrt(pixels) / 8)
+    # Adjust for complexity (more complex → larger grid)
+    adjusted = int(base * (0.6 + complexity * 0.8))
+    # Snap to nearest valid size
+    valid = [16, 29, 32, 48, 58, 64]
+    return min(valid, key=lambda v: abs(v - adjusted))
+
+
 def process(
     data: bytes,
     grid_size: int = 48,
     n_colors: int = 48,
     brand: str = "artkal",
     cell_size: int = 28,
+    dither: bool = True,
 ) -> Tuple[bytes, dict]:
     n_colors = min(n_colors, grid_size * grid_size)
 
@@ -363,9 +390,9 @@ def process(
         raise
 
     try:
-        logger.info(f"[5/9] 色彩量化+映射品牌={brand} 上限={n_colors}...")
-        img, stats = _map_to_beads(img, brand, n_colors)
-        logger.info(f"[5/9] 映射完成: {len(stats.get('codes',[]))} 种颜色")
+        logger.info(f"[5/9] CIEDE2000 色彩映射 brand={brand} colors={n_colors} dither={dither}...")
+        img, stats = _map_to_beads(img, brand, n_colors, dither=dither)
+        logger.info(f"[5/9] 映射完成: {len(stats.get('codes',[]))} 色")
     except Exception:
         logger.error(f"[5/9] 颜色映射失败:\n{traceback.format_exc()}")
         raise
