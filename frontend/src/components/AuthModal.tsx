@@ -52,6 +52,8 @@ export default function AuthModal({ open, onClose, onLogin }: AuthModalProps) {
   const submit = async () => {
     setError("");
     setLoading(true);
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 15_000);
     try {
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/signup";
       const body = mode === "login"
@@ -62,6 +64,7 @@ export default function AuthModal({ open, onClose, onLogin }: AuthModalProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: ctrl.signal,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "请求失败");
@@ -70,8 +73,13 @@ export default function AuthModal({ open, onClose, onLogin }: AuthModalProps) {
       onLogin(data.user, data.token);
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).name === "AbortError") {
+        setError("连接超时，请检查网络后重试");
+      } else {
+        setError((e as Error).message || "请求失败");
+      }
     } finally {
+      clearTimeout(tid);
       setLoading(false);
     }
   };

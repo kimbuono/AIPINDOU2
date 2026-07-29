@@ -39,14 +39,23 @@ export default function ProjectsPage() {
 
   const loadProjects = async () => {
     const { token } = getUser();
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15_000);
     try {
       const url = `${API_URL}/api/projects?sort=updated_at${search ? `&search=${encodeURIComponent(search)}` : ""}`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
       if (res.ok) setProjects(await res.json());
     } catch {
-      setError("加载失败");
+      setError("服务器连接失败，请刷新重试");
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };

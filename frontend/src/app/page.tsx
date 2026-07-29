@@ -204,17 +204,21 @@ export default function Home() {
   const saveProject = async () => {
     if (!currentUser || !blueprintUrl || !stats) return;
     const { token } = getUser();
-    if (!token) return;
+    if (!token) { setSaveStatus("error"); return; }
     setSaveStatus("saving");
     try {
-      // Extract base64 from the blob URL
-      const blob = await fetch(blueprintUrl).then(r => r.blob());
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 30_000);
+      const blob = await fetch(blueprintUrl, { signal: ctrl.signal }).then(r => r.blob());
+      clearTimeout(tid);
       const reader = new FileReader();
       const bpBase64 = await new Promise<string>((resolve) => {
         reader.onload = () => resolve((reader.result as string).split(",")[1]);
         reader.readAsDataURL(blob);
       });
 
+      const ctrl2 = new AbortController();
+      const tid2 = setTimeout(() => ctrl2.abort(), 15_000);
       const res = await fetch(`${API_URL}/api/projects`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -225,7 +229,9 @@ export default function Home() {
           blueprint_image: bpBase64,
           stats_json: JSON.stringify(stats),
         }),
+        signal: ctrl2.signal,
       });
+      clearTimeout(tid2);
       if (res.ok) setSaveStatus("saved");
       else setSaveStatus("error");
     } catch {
@@ -236,10 +242,14 @@ export default function Home() {
   const loadProject = async (id: number) => {
     const { token } = getUser();
     if (!token) return;
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 15_000);
     try {
       const res = await fetch(`${API_URL}/api/projects/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: ctrl.signal,
       });
+      clearTimeout(tid);
       if (!res.ok) return;
       const p = await res.json();
       // Restore config
