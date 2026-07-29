@@ -211,8 +211,8 @@ def _map_to_beads(
             remap_lut[p] = _snap_to_top(p[0], p[1], p[2])  # type: ignore[index]
 
     if dither and len(top_rgbs) >= 2:
-        # Sierra Lite for better skin tones (less worm artifacts)
-        out_pixels = sierra_lite_dither(
+        # Floyd-Steinberg: sharper edges, fewer artifacts than Sierra Lite
+        out_pixels = floyd_steinberg_dither(
             [(p[0], p[1], p[2]) for p in pixels],  # type: ignore[index]
             img.size[0], img.size[1],
             top_rgbs,
@@ -223,12 +223,46 @@ def _map_to_beads(
     out = Image.new("RGB", img.size)
     out.putdata(out_pixels)  # type: ignore[arg-type]
 
-    # 4. Count stats
+    # 4. Count stats + merge low-count colours
     pixel_counter = _Counter()
     for px in out_pixels:
         pixel_counter[px] += 1
-    sorted_rgbs = [rgb for rgb, _ in pixel_counter.most_common()]
+    total_px = sum(pixel_counter.values())
 
+    # Merge colours with <2% usage into nearest dominant colour
+    threshold = max(1, int(total_px * 0.02))
+    sorted_rgbs_raw = [rgb for rgb, _ in pixel_counter.most_common()]
+    dominant_rgbs = [rgb for rgb in sorted_rgbs_raw if pixel_counter[rgb] >= threshold]
+
+    if len(dominant_rgbs) < 3 and len(sorted_rgbs_raw) > 3:
+        # Ensure at least 3 colors (safety)
+        dominant_rgbs = sorted_rgbs_raw[:max(3, len(dominant_rgbs))]
+
+    # Remap: snap minor colors to nearest dominant
+    if len(dominant_rgbs) < len(sorted_rgbs_raw):
+        dlabs = [_rgb_to_lab(*d) for d in dominant_rgbs]
+        def _nearest_dominant(r, g, b):
+            t = _rgb_to_lab(r, g, b)
+            bi, bd = 0, float("inf")
+            for i, lab in enumerate(dlabs):
+                d = (t[0]-lab[0])**2 + (t[1]-lab[1])**2 + (t[2]-lab[2])**2
+                if d < bd:
+                    bd, bi = d, i
+            return dominant_rgbs[bi]
+        remap = {}
+        for rgb in sorted_rgbs_raw:
+            if rgb in dominant_rgbs:
+                remap[rgb] = rgb
+            else:
+                remap[rgb] = _nearest_dominant(rgb[0], rgb[1], rgb[2])
+        out_pixels = [remap[p] for p in out_pixels]
+        # Recount
+        pixel_counter = _Counter()
+        for px in out_pixels:
+            pixel_counter[px] += 1
+        logger.info(f"  Merged {len(sorted_rgbs_raw)}→{len(dominant_rgbs)} colours (<2% threshold)")
+
+    sorted_rgbs = [rgb for rgb, _ in pixel_counter.most_common()]
     codes, names = [], []
     for rgb in sorted_rgbs:
         c, n, _ = mapper.map(rgb[0], rgb[1], rgb[2])
