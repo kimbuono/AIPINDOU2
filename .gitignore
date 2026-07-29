@@ -36,6 +36,11 @@ env/
 .DS_Store
 Thumbs.db
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # Temp
 *.log
 npm-debug.log*

@@ -11,6 +11,7 @@ import FeatureCards from "@/components/FeatureCards";
 import HowItWorks from "@/components/HowItWorks";
 import Footer from "@/components/Footer";
 import { AlertIcon } from "@/components/Icons";
+import AuthModal, { getUser, saveAuth, type User } from "@/components/AuthModal";
 
 // ── types ──────────────────────────────────────────────────────────────
 type GridSize = 16 | 29 | 32 | 48 | 58 | 64;
@@ -66,8 +67,20 @@ export default function Home() {
 
   const isLanding = appState === "idle" || appState === "ready";
 
-  // ── warm up backend on first visit ──────────────────────────────
+  // ── auth state ──────────────────────────────────────────────────
+  const [authOpen, setAuthOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"" | "saving" | "saved" | "error">("");
+
   useEffect(() => { warmUpBackend(); }, []);
+  useEffect(() => {
+    const { user: u } = getUser();
+    setCurrentUser(u);
+    // Load project if ?load=<id> in URL
+    const params = new URLSearchParams(window.location.search);
+    const loadId = params.get("load");
+    if (loadId && u) loadProject(parseInt(loadId));
+  }, []);
 
   // ── handlers ─────────────────────────────────────────────────────
 
@@ -188,6 +201,66 @@ export default function Home() {
     }
   };
 
+  const saveProject = async () => {
+    if (!currentUser || !blueprintUrl || !stats) return;
+    const { token } = getUser();
+    if (!token) return;
+    setSaveStatus("saving");
+    try {
+      // Extract base64 from the blob URL
+      const blob = await fetch(blueprintUrl).then(r => r.blob());
+      const reader = new FileReader();
+      const bpBase64 = await new Promise<string>((resolve) => {
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.readAsDataURL(blob);
+      });
+
+      const res = await fetch(`${API_URL}/api/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: `拼豆图纸 ${gridSize}×${gridSize}`,
+          grid_size: gridSize, n_colors: colorCount,
+          brand, dither,
+          blueprint_image: bpBase64,
+          stats_json: JSON.stringify(stats),
+        }),
+      });
+      if (res.ok) setSaveStatus("saved");
+      else setSaveStatus("error");
+    } catch {
+      setSaveStatus("error");
+    }
+  };
+
+  const loadProject = async (id: number) => {
+    const { token } = getUser();
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_URL}/api/projects/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const p = await res.json();
+      // Restore config
+      setGridSize(p.grid_size);
+      if ([16, 24, 32, 48, 64, 80, 96, 128, 256].includes(p.n_colors)) {
+        setColorCount(p.n_colors as ColorCount);
+      }
+      if (["artkal", "perler"].includes(p.brand)) setBrand(p.brand as Brand);
+      setDither(!!p.dither);
+      // Restore blueprint
+      if (p.blueprint_image) {
+        const blob = base64ToBlob(p.blueprint_image, "image/png");
+        setBlueprintUrl(URL.createObjectURL(blob));
+        if (p.stats_json) {
+          try { setStats(JSON.parse(p.stats_json)); } catch { /* ignore */ }
+        }
+        setAppState("done");
+      }
+    } catch { /* silent */ }
+  };
+
   const handleDownload = () => {
     if (!blueprintUrl) return;
     const a = document.createElement("a");
@@ -202,7 +275,12 @@ export default function Home() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[#fafafa]">
-      <Header />
+      <Header onOpenAuth={() => setAuthOpen(true)} />
+      <AuthModal
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        onLogin={(user) => { setCurrentUser(user); (window as unknown as Record<string, () => void>).__refreshHeaderUser?.(); }}
+      />
 
       <main className="flex-1">
         {appState === "idle" && <Hero />}
@@ -266,14 +344,36 @@ export default function Home() {
 
           {/* result */}
           {appState === "done" && stats && blueprintUrl && (
-            <BlueprintResult
-              imageUrl={blueprintUrl}
-              stats={stats}
-              originalUrl={previewUrl}
-              onDownload={handleDownload}
-              onRegenerate={handleGenerate}
-              onReset={handleFileRemove}
-            />
+            <>
+              <BlueprintResult
+                imageUrl={blueprintUrl}
+                stats={stats}
+                originalUrl={previewUrl}
+                onDownload={handleDownload}
+                onRegenerate={handleGenerate}
+                onReset={handleFileRemove}
+              />
+              {/* Save button */}
+              {currentUser && (
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    onClick={saveProject}
+                    disabled={saveStatus === "saving"}
+                    className="flex-1 py-3 rounded-xl text-[14px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  >
+                    {saveStatus === "saving" ? "正在保存…" : saveStatus === "saved" ? "已保存 ✓" : "保存到我的作品"}
+                  </button>
+                  {saveStatus === "error" && (
+                    <span className="text-[13px] text-red-500">保存失败</span>
+                  )}
+                </div>
+              )}
+              {!currentUser && (
+                <p className="mt-3 text-center text-[13px] text-neutral-400">
+                  <button onClick={() => setAuthOpen(true)} className="text-blue-500 font-medium">登录</button>后可以保存作品
+                </p>
+              )}
+            </>
           )}
         </div>
 

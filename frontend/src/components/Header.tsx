@@ -1,20 +1,65 @@
 "use client";
 
-export default function Header() {
+import Link from "next/link";
+import { getUser, clearAuth, type User } from "./AuthModal";
+import { useState, useEffect } from "react";
+
+interface HeaderProps {
+  onOpenAuth: () => void;
+}
+
+export default function Header({ onOpenAuth }: HeaderProps) {
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const { user: u } = getUser();
+    setUser(u);
+  }, []);
+
+  const refreshUser = () => {
+    const { user: u } = getUser();
+    setUser(u);
+  };
+
+  // Expose refreshUser globally so page.tsx can call it
+  if (typeof window !== "undefined") {
+    (window as unknown as Record<string, unknown>).__refreshHeaderUser = refreshUser;
+  }
+
   return (
-    <header className="sticky top-0 z-50 border-b border-black/5 bg-white/80 backdrop-blur-xl supports-[backdrop-filter]:bg-white/60">
+    <header className="sticky top-0 z-40 border-b border-black/5 bg-white/80 backdrop-blur-xl">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-5">
-        <a href="/" className="flex items-center gap-2.5 select-none group" aria-label="爱拼豆首页">
-          <span className="text-[26px] leading-none transition-transform duration-300 group-hover:scale-110">
-            🫘
-          </span>
-          <span className="text-[17px] font-semibold tracking-tight text-neutral-900">
-            爱拼豆
-          </span>
-        </a>
-        <p className="text-[13px] text-neutral-400 hidden sm:block font-medium">
-          上传照片，自动生成拼豆图纸
-        </p>
+        <Link href="/" className="flex items-center gap-2.5 select-none">
+          <span className="text-[26px] leading-none">🫘</span>
+          <span className="text-[17px] font-semibold tracking-tight text-neutral-900">爱拼豆</span>
+        </Link>
+
+        <div className="flex items-center gap-3">
+          {user ? (
+            <>
+              <Link
+                href="/projects"
+                className="text-[13px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors"
+              >
+                我的作品
+              </Link>
+              <span className="text-[13px] text-neutral-400 hidden sm:inline">{user.username}</span>
+              <button
+                onClick={() => { clearAuth(); setUser(null); }}
+                className="text-[13px] text-neutral-400 hover:text-red-500 transition-colors"
+              >
+                退出
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={onOpenAuth}
+              className="px-4 py-1.5 rounded-lg bg-neutral-900 text-white text-[13px] font-medium hover:bg-neutral-800 transition-colors"
+            >
+              登录
+            </button>
+          )}
+        </div>
       </div>
     </header>
   );
