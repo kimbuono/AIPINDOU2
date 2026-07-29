@@ -26,14 +26,24 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
+  const [stuck, setStuck] = useState(false);
 
   useEffect(() => {
-    const { user: u } = getUser();
+    console.log("[DIAG] ProjectsPage mounted");
+    const { user: u, token: t } = getUser();
+    console.log("[DIAG] getUser() result:", { hasUser: !!u, hasToken: !!t, user: u?.email });
     setUser(u);
+    // Safety net: force exit loading after 12s
+    const safety = setTimeout(() => {
+      setLoading((prev) => { if (prev) { setStuck(true); setError("初始化超时"); return false; } return prev; });
+    }, 12_000);
+    return () => clearTimeout(safety);
   }, []);
 
   useEffect(() => {
+    console.log("[DIAG] User effect triggered, user:", user?.email);
     if (!user) {
+      console.log("[DIAG] No user → setLoading(false)");
       setLoading(false);
       return;
     }
@@ -42,23 +52,36 @@ export default function ProjectsPage() {
 
   const loadProjects = async () => {
     const { token } = getUser();
+    console.log("[DIAG] loadProjects: token exists =", !!token);
     if (!token) {
+      console.log("[DIAG] No token → setLoading(false)");
       setLoading(false);
       return;
     }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15_000);
+    const timeoutId = setTimeout(() => {
+      console.log("[DIAG] loadProjects TIMEOUT after 15s");
+      controller.abort();
+    }, 15_000);
     try {
       const url = `${API_URL}/api/projects?sort=updated_at${search ? `&search=${encodeURIComponent(search)}` : ""}`;
+      console.log("[DIAG] Fetching:", url);
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
         signal: controller.signal,
       });
-      if (res.ok) setProjects(await res.json());
-    } catch {
+      console.log("[DIAG] Response:", res.status);
+      if (res.ok) {
+        const data = await res.json();
+        console.log("[DIAG] Projects loaded:", data.length);
+        setProjects(data);
+      }
+    } catch (e) {
+      console.error("[DIAG] Fetch error:", (e as Error).message);
       setError("服务器连接失败，请刷新重试");
     } finally {
       clearTimeout(timeoutId);
+      console.log("[DIAG] setLoading(false) in finally");
       setLoading(false);
     }
   };
@@ -133,8 +156,19 @@ export default function ProjectsPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
 
-        {loading ? (
+        {loading && !stuck ? (
           <p className="py-12 text-center text-neutral-400">加载中…</p>
+        ) : stuck ? (
+          <div className="py-12 text-center">
+            <p className="mb-3 text-[15px] text-red-500">加载超时</p>
+            <p className="mb-4 text-[13px] text-neutral-400">{error || "请检查网络连接后刷新页面"}</p>
+            <button
+              className="rounded-lg bg-neutral-900 px-4 py-2 text-[14px] text-white"
+              onClick={() => { setStuck(false); setLoading(true); setError(""); loadProjects(); }}
+            >
+              重新加载
+            </button>
+          </div>
         ) : projects.length === 0 ? (
           <div className="py-12 text-center">
             <p className="mb-3 text-[15px] text-neutral-400">还没有保存的作品</p>
