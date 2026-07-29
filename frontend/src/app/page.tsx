@@ -15,8 +15,8 @@ import AuthModal, { getUser, saveAuth, type User } from "@/components/AuthModal"
 
 // ── types ──────────────────────────────────────────────────────────────
 type GridSize = 16 | 29 | 32 | 48 | 58 | 64;
-type ColorCount = 16 | 24 | 32 | 48 | 64 | 80 | 96 | 128 | 256;
-type Brand = "artkal" | "perler";
+type ColorCount = 8 | 16 | 24 | 32 | 48 | 64 | 96 | 128 | 192 | 256;
+type Brand = "artkal" | "perler" | "hama";
 
 interface BlueprintStats {
   codes: string[];

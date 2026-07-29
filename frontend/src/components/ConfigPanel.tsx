@@ -1,8 +1,8 @@
 "use client";
 
 type GridSize = 16 | 29 | 32 | 48 | 58 | 64;
-type ColorCount = 16 | 24 | 32 | 48 | 64 | 80 | 96 | 128 | 256;
-type Brand = "artkal" | "perler";
+type ColorCount = 8 | 16 | 24 | 32 | 48 | 64 | 96 | 128 | 192 | 256;
+type Brand = "artkal" | "perler" | "hama";
 
 const SIZES: { value: GridSize; label: string; desc: string }[] = [
   { value: 16, label: "16×16", desc: "迷你" },
@@ -14,20 +14,22 @@ const SIZES: { value: GridSize; label: string; desc: string }[] = [
 ];
 
 const COLORS: { value: ColorCount; label: string }[] = [
+  { value: 8, label: "8 色" },
   { value: 16, label: "16 色" },
   { value: 24, label: "24 色" },
   { value: 32, label: "32 色" },
   { value: 48, label: "48 色" },
   { value: 64, label: "64 色" },
-  { value: 80, label: "80 色" },
   { value: 96, label: "96 色" },
   { value: 128, label: "128 色" },
+  { value: 192, label: "192 色" },
   { value: 256, label: "256 色" },
 ];
 
 const BRANDS: { value: Brand; label: string; desc: string }[] = [
   { value: "artkal", label: "Artkal", desc: "S 系列 99 色" },
   { value: "perler", label: "Perler", desc: "经典 67 色" },
+  { value: "hama", label: "Hama", desc: "Midi 55 色" },
 ];
 
 interface ConfigPanelProps {

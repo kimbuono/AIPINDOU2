@@ -8,7 +8,7 @@ import logging
 import math
 import sys
 import traceback
-from collections import Counter
+from collections import Counter as _Counter
 from io import BytesIO
 from typing import List, Tuple
 
@@ -110,11 +110,6 @@ def _resize_keep_aspect(img: Image.Image, grid: int) -> Image.Image:
 # Colour mapping (optimised — palette-level, not pixel-level)
 # ═══════════════════════════════════════════════════════════════════════
 
-def _fast_quantize(img: Image.Image, max_colors: int = 256) -> Image.Image:
-    """Pillow C-level quantize — instant even for large images."""
-    return img.quantize(colors=min(max_colors, 256), method=Image.Quantize.MEDIANCUT)
-
-
 def _map_to_beads(
     img: Image.Image,
     brand: str,
@@ -122,115 +117,98 @@ def _map_to_beads(
     dither: bool = False,
 ) -> Tuple[Image.Image, dict]:
     """
-    Map image colours to professional bead palette using CIEDE2000.
+    Map image to professional bead palette.
 
-    Strategy: work at the PALETTE level (≤256 entries), not pixel level.
-    Optional Floyd-Steinberg dithering for smoother gradients.
+    Strategy: pixel-level CIEDE2000 mapping → select top-N unique bead
+    colours actually used → Floyd-Steinberg dither within allowed palette.
     """
-    mapper = get_mapper(brand)
-
-    # 1. Quantise to intermediate palette (C speed)
-    quantized = _fast_quantize(img)
-    palette_img = quantized.convert("RGB")
-
-    # 2. Get the intermediate palette and pixel counts
-    # getcolors() on a P-mode image returns [(count, palette_index), ...]
-    raw_counts = quantized.getcolors()
-    if not raw_counts:
-        counter: Counter = Counter()
-        for p in palette_img.getdata():  # type: ignore[arg-type]
-            counter[p] += 1
-        raw_counts = [(v, k) for k, v in counter.items()]
-
-    # Convert palette indices → RGB tuples
-    if quantized.mode == "P":
-        palette = quantized.getpalette()
-        color_counts = [
-            (count, (palette[idx*3], palette[idx*3+1], palette[idx*3+2]))
-            for count, idx in raw_counts
-        ]
-    else:
-        color_counts = raw_counts
-
-    # Sort by frequency
-    color_counts.sort(key=lambda x: x[0], reverse=True)
-
-    # 3. Map each palette entry to nearest bead colour (≤256 lookups!)
-    bead_lut: dict[Tuple[int, int, int], Tuple[str, str, Tuple[int, int, int]]] = {}
-    usage: dict[str, int] = {}
-    for count, src_color in color_counts:
-        code, name, brgb = mapper.map(src_color[0], src_color[1], src_color[2])
-        bead_lut[src_color] = (code, name, brgb)
-        usage[code] = usage.get(code, 0) + count
-
-    # 4. Select top-N bead colours
-    top_codes = sorted(usage, key=usage.get, reverse=True)[:n_colors]  # type: ignore[arg-type]
-    top_set = set(top_codes)
-
-    # 5. Build fast fallback mapper for colours outside top-N
     from .color_engine import rgb_to_lab as _rgb_to_lab
-    top_rgbs: list = []
-    top_info: list = []
-    seen = set()
-    for _, src_color in color_counts:
-        code, name, brgb = bead_lut[src_color]
-        if code in top_set and brgb not in seen:
-            seen.add(brgb)
-            top_rgbs.append(brgb)
-            top_info.append((code, name, brgb))
+
+    mapper = get_mapper(brand)
+    pixels = list(img.getdata())  # type: ignore[arg-type]
+
+    # 1. Map every pixel to nearest bead colour via CIEDE2000 KD-tree
+    #    Build a cache for speed (unique colours only)
+    unique_src = set(pixels)
+    bead_map: dict = {}
+    bead_usage: dict[str, int] = {}
+    logger.info(f"  Mapping {len(unique_src)} unique colours to {brand} palette...")
+    for p in unique_src:
+        code, name, brgb = mapper.map(p[0], p[1], p[2])  # type: ignore[index]
+        bead_map[p] = brgb  # type: ignore[index]
+        bead_usage[code] = bead_usage.get(code, 0) + 1
+
+    # 2. Select bead colours: use all colours present in the image, up
+    #    to n_colors. If fewer are used, report honestly (physical limit
+    #    of the bead palette for this image).
+    sorted_codes = sorted(bead_usage, key=bead_usage.get, reverse=True)  # type: ignore[arg-type]
+    # Use all unique bead colours that appear, capped at n_colors
+    selected_codes = sorted_codes[:n_colors]
+    # Build allowed RGB palette
+    top_rgbs = list({bead_map[p] for p in unique_src
+                     if mapper.map(p[0], p[1], p[2])[0] in set(selected_codes)})  # type: ignore[index]
+    # Sort by frequency for consistent dithering
+    rgb_freq = {}
+    for p in unique_src:
+        bm = bead_map[p]  # type: ignore[index]
+        rgb_freq[bm] = rgb_freq.get(bm, 0) + 1
+    top_rgbs.sort(key=lambda x: rgb_freq.get(x, 0), reverse=True)
+    logger.info(f"  Using {len(top_rgbs)} bead colours (max available for this image)")
+
+    # 3. Apply pixel mapping: snap every pixel to nearest allowed bead
+    #    colour (within the selected top-N), with dithering.
+    # Build a fast remap LUT for pixels whose natural bead is outside top-N
+    from .color_engine import rgb_to_lab as _rgb_to_lab
     top_labs = [_rgb_to_lab(*rgb) for rgb in top_rgbs]
 
-    def nearest_in_top(r: int, g: int, b: int):
+    def _snap_to_top(r, g, b):
         t = _rgb_to_lab(r, g, b)
-        best_i, best_d = 0, float("inf")
+        bi, bd = 0, float("inf")
         for i, lab in enumerate(top_labs):
             d = (t[0]-lab[0])**2 + (t[1]-lab[1])**2 + (t[2]-lab[2])**2
-            if d < best_d:
-                best_d, best_i = d, i
-        return top_info[best_i]
+            if d < bd:
+                bd, bi = d, i
+        return top_rgbs[bi]
 
-    # 6. Build final palette-to-bead LUT
-    final_lut: dict = {}
-    for _, src_color in color_counts:
-        code, name, brgb = bead_lut[src_color]
-        if code not in top_set:
-            code, name, brgb = nearest_in_top(src_color[0], src_color[1], src_color[2])
-        final_lut[src_color] = brgb
+    remap_lut = {}
+    for p in unique_src:
+        bm = bead_map[p]  # type: ignore[index]
+        if bm in top_rgbs:
+            remap_lut[p] = bm  # type: ignore[index]
+        else:
+            remap_lut[p] = _snap_to_top(p[0], p[1], p[2])  # type: ignore[index]
 
-    # 7. Apply the LUT to produce the output image (with optional dithering)
-    pixels = list(palette_img.getdata())  # type: ignore[arg-type]
-    if dither:
-        # Floyd-Steinberg over the selected bead palette
-        palette_rgbs = list(set(final_lut.values()))
+    if dither and len(top_rgbs) >= 2:
         from .color_engine import floyd_steinberg_dither
         out_pixels = floyd_steinberg_dither(
-            [(p[0], p[1], p[2]) for p in pixels],
+            [(p[0], p[1], p[2]) for p in pixels],  # type: ignore[index]
             img.size[0], img.size[1],
-            palette_rgbs,
+            top_rgbs,
         )
     else:
-        out_pixels = [final_lut[p] for p in pixels]  # type: ignore[index]
+        out_pixels = [remap_lut[p] for p in pixels]  # type: ignore[index]
+
     out = Image.new("RGB", img.size)
     out.putdata(out_pixels)  # type: ignore[arg-type]
 
-    # 8. Build stats
-    final_counts: dict[Tuple[int, int, int], int] = {}
-    for p in out_pixels:
-        final_counts[p] = final_counts.get(p, 0) + 1  # type: ignore[index]
+    # 4. Count stats
+    pixel_counter = _Counter()
+    for px in out_pixels:
+        pixel_counter[px] += 1
+    sorted_rgbs = [rgb for rgb, _ in pixel_counter.most_common()]
 
-    sorted_rgbs = sorted(final_counts, key=final_counts.get, reverse=True)  # type: ignore[arg-type]
-    remap_codes, remap_names = [], []
+    codes, names = [], []
     for rgb in sorted_rgbs:
-        code, name, _ = mapper.map(rgb[0], rgb[1], rgb[2])
-        remap_codes.append(code)
-        remap_names.append(name)
+        c, n, _ = mapper.map(rgb[0], rgb[1], rgb[2])
+        codes.append(c)
+        names.append(n)
 
     stats = {
-        "codes":  remap_codes,
-        "names":  remap_names,
+        "codes":  codes,
+        "names":  names,
         "rgb":    [list(rgb) for rgb in sorted_rgbs],
-        "counts": [final_counts[rgb] for rgb in sorted_rgbs],
-        "total":  sum(final_counts.values()),
+        "counts": [pixel_counter[rgb] for rgb in sorted_rgbs],
+        "total":  sum(pixel_counter.values()),
         "brand":  brand,
     }
     return out, stats

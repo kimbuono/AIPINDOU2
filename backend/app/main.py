@@ -50,8 +50,8 @@ app.add_middleware(
 # ── 常量 ────────────────────────────────────────────────────────────────
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 VALID_SIZES = {16, 29, 32, 48, 58, 64}
-VALID_COLORS = {16, 24, 32, 48, 64, 80, 96, 128, 256}
-VALID_BRANDS = {"artkal", "perler"}
+VALID_COLORS = {8, 16, 24, 32, 48, 64, 96, 128, 192, 256}
+VALID_BRANDS = {"artkal", "perler", "hama"}
 
 ERROR_MESSAGES = {
     "invalid_size": "不支持的图纸尺寸 {size}，可选：{valid}",
