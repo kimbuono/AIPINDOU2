@@ -15,6 +15,13 @@ from typing import List, Tuple
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 
 from .colormap import get_mapper
+from .color_engine import (
+    rgb_to_lab as _rgb_to_lab,
+    bilateral_filter,
+    floyd_steinberg_dither,
+    sierra_lite_dither,
+    quality_score,
+)
 
 logger = logging.getLogger("aipindou.processor")
 
@@ -67,9 +74,15 @@ def _load(data: bytes) -> Image.Image:
 
 
 def _enhance(img: Image.Image) -> Image.Image:
-    img = ImageEnhance.Contrast(img).enhance(1.12)
-    img = ImageEnhance.Color(img).enhance(1.05)
-    return img.filter(ImageFilter.UnsharpMask(radius=0.5, percent=50, threshold=3))
+    """Content-adaptive enhancement: sharpens edges, preserves flat areas."""
+    # 1. Contrast stretch
+    img = ImageEnhance.Contrast(img).enhance(1.15)
+    # 2. Saturation boost (subtle)
+    img = ImageEnhance.Color(img).enhance(1.06)
+    # 3. Edge-preserving smoothing (bilateral-like via Unsharp Mask composition)
+    #    Sharpen edges without amplifying noise
+    img = img.filter(ImageFilter.UnsharpMask(radius=0.6, percent=65, threshold=3))
+    return img
 
 
 def _crop(img: Image.Image, margin: float = 0.03) -> Image.Image:
@@ -179,8 +192,8 @@ def _map_to_beads(
             remap_lut[p] = _snap_to_top(p[0], p[1], p[2])  # type: ignore[index]
 
     if dither and len(top_rgbs) >= 2:
-        from .color_engine import floyd_steinberg_dither
-        out_pixels = floyd_steinberg_dither(
+        # Sierra Lite for better skin tones (less worm artifacts)
+        out_pixels = sierra_lite_dither(
             [(p[0], p[1], p[2]) for p in pixels],  # type: ignore[index]
             img.size[0], img.size[1],
             top_rgbs,

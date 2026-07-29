@@ -273,3 +273,171 @@ def content_weight_map(
 
     # auto: blend edge with uniform
     return [0.3 + 0.7 * e for e in edges]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Edge-preserving bilateral filter (pure Python, small images only)
+# ═══════════════════════════════════════════════════════════════════════
+
+def bilateral_filter(
+    pixels: List[Tuple[int, int, int]],
+    w: int, h: int,
+    radius: int = 2,
+    sigma_space: float = 3.0,
+    sigma_color: float = 30.0,
+) -> List[Tuple[int, int, int]]:
+    """
+    Edge-preserving smoothing. Smooths flat areas while keeping edges sharp.
+    Like Photoshop's 'Surface Blur' — critical for reducing noise before
+    quantization without destroying facial features.
+    """
+    result = list(pixels)
+    s2 = 2.0 * sigma_space * sigma_space
+    c2 = 2.0 * sigma_color * sigma_color
+
+    for y in range(h):
+        for x in range(w):
+            i = y * w + x
+            r0, g0, b0 = pixels[i]
+            sum_r = sum_g = sum_b = 0.0
+            total_w = 0.0
+
+            for dy in range(-radius, radius + 1):
+                ny = y + dy
+                if ny < 0 or ny >= h:
+                    continue
+                for dx in range(-radius, radius + 1):
+                    nx = x + dx
+                    if nx < 0 or nx >= w:
+                        continue
+                    # Spatial weight
+                    sw = math.exp(-(dx * dx + dy * dy) / s2)
+                    # Color weight
+                    ni = ny * w + nx
+                    nr, ng, nb = pixels[ni]
+                    dr = r0 - nr
+                    dg = g0 - ng
+                    db = b0 - nb
+                    cw = math.exp(-(dr * dr + dg * dg + db * db) / c2)
+                    weight = sw * cw
+                    sum_r += nr * weight
+                    sum_g += ng * weight
+                    sum_b += nb * weight
+                    total_w += weight
+
+            if total_w > 0:
+                result[i] = (
+                    int(sum_r / total_w),
+                    int(sum_g / total_w),
+                    int(sum_b / total_w),
+                )
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Sierra Lite dithering (better for skin tones than Floyd-Steinberg)
+# ═══════════════════════════════════════════════════════════════════════
+
+def sierra_lite_dither(
+    pixels: List[Tuple[int, int, int]],
+    w: int, h: int,
+    palette: List[Tuple[int, int, int]],
+) -> List[Tuple[int, int, int]]:
+    """
+    Sierra Lite error diffusion — produces smoother skin tones and
+    less worm artifacts than Floyd-Steinberg, at the cost of slightly
+    softer edges. Better for portrait/face images.
+    """
+    result = list(pixels)
+    fpixels = [[float(c) for c in p] for p in pixels]
+
+    for y in range(h):
+        for x in range(w):
+            i = y * w + x
+            r = max(0.0, min(255.0, fpixels[i][0]))
+            g = max(0.0, min(255.0, fpixels[i][1]))
+            b = max(0.0, min(255.0, fpixels[i][2]))
+
+            # Find nearest palette entry
+            best_c = palette[0]
+            best_d = float("inf")
+            for pc in palette:
+                dr = r - pc[0]
+                dg = g - pc[1]
+                db = b - pc[2]
+                d = dr * dr + dg * dg + db * db
+                if d < best_d:
+                    best_d, best_c = d, pc
+
+            result[i] = best_c
+            err_r = r - best_c[0]
+            err_g = g - best_c[1]
+            err_b = b - best_c[2]
+
+            # Sierra Lite kernel (more gentle error distribution)
+            kernel = [
+                (1, 0, 2 / 4),
+                (2, 0, 1 / 4),
+                (-1, 1, 1 / 4),
+                (0, 1, 1 / 4),
+                (1, 1, 1 / 4),
+            ]
+            for dx, dy, wgt in kernel:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    ni = ny * w + nx
+                    fpixels[ni][0] += err_r * wgt
+                    fpixels[ni][1] += err_g * wgt
+                    fpixels[ni][2] += err_b * wgt
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Quality scoring
+# ═══════════════════════════════════════════════════════════════════════
+
+def quality_score(
+    original: List[Tuple[int, int, int]],
+    result: List[Tuple[int, int, int]],
+    w: int, h: int,
+) -> float:
+    """
+    0.0–1.0 quality score. Higher = better structural similarity.
+
+    Components:
+      - Edge preservation (did we keep the important lines?)
+      - Colour diversity (did we use enough colours?)
+      - Structural similarity (SSIM-inspired luminance correlation)
+    """
+    n = len(original)
+    if n == 0:
+        return 0.0
+
+    # 1. Edge preservation score
+    orig_edges = detect_edges(original, w, h)
+    result_edges = detect_edges(result, w, h)
+    edge_corr = sum(a * b for a, b in zip(orig_edges, result_edges)) / max(
+        math.sqrt(sum(a * a for a in orig_edges) * sum(b * b for b in result_edges)), 1e-10
+    )
+    edge_score = max(0.0, min(1.0, edge_corr))
+
+    # 2. Colour diversity score (penalise if too few colours)
+    unique = len(set(result))
+    diversity = min(1.0, unique / 24.0)
+
+    # 3. Luminance similarity
+    def _luma(p: Tuple[int, int, int]) -> float:
+        return 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]
+    orig_luma = [_luma(p) for p in original]
+    result_luma = [_luma(p) for p in result]
+    mean_o = sum(orig_luma) / n
+    mean_r = sum(result_luma) / n
+    cov = sum((a - mean_o) * (b - mean_r) for a, b in zip(orig_luma, result_luma)) / n
+    var_o = sum((a - mean_o) ** 2 for a in orig_luma) / n
+    var_r = sum((b - mean_r) ** 2 for b in result_luma) / n
+    luma_score = (2 * cov + 1e-4) / (var_o + var_r + 1e-4)
+    luma_score = max(0.0, min(1.0, luma_score))
+
+    return 0.4 * edge_score + 0.3 * diversity + 0.3 * luma_score
