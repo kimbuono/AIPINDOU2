@@ -56,9 +56,7 @@ export default function AuthModal({ open, onClose, onLogin }: AuthModalProps) {
     const tid = setTimeout(() => ctrl.abort(), 15_000);
     try {
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/signup";
-      const body = mode === "login"
-        ? { email, password }
-        : { email, username, password };
+      const body = mode === "login" ? { email, password } : { email, username, password };
 
       const res = await fetch(`${API_URL}${endpoint}`, {
         method: "POST",
@@ -85,55 +83,69 @@ export default function AuthModal({ open, onClose, onLogin }: AuthModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl border border-neutral-200 w-full max-w-sm mx-4 p-6" onClick={e => e.stopPropagation()}>
-        <h2 className="text-[17px] font-bold text-neutral-800 mb-5">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="mx-4 w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="mb-5 text-[17px] font-bold text-neutral-800">
           {mode === "login" ? "登录" : "注册"}
         </h2>
 
         {error && (
-          <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-100 text-[13px] text-red-600">{error}</div>
+          <div className="mb-4 rounded-xl border border-red-100 bg-red-50 p-3 text-[13px] text-red-600">
+            {error}
+          </div>
         )}
 
         <div className="space-y-3">
           <input
-            className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-200 text-[14px] outline-none focus:border-neutral-400"
+            className="w-full rounded-xl border border-neutral-200 px-3.5 py-2.5 text-[14px] outline-none focus:border-neutral-400"
             placeholder="邮箱"
             type="email"
             value={email}
-            onChange={e => setEmail(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && submit()}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
           />
           {mode === "signup" && (
             <input
-              className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-200 text-[14px] outline-none focus:border-neutral-400"
+              className="w-full rounded-xl border border-neutral-200 px-3.5 py-2.5 text-[14px] outline-none focus:border-neutral-400"
               placeholder="用户名"
               value={username}
-              onChange={e => setUsername(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && submit()}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
             />
           )}
           <input
-            className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-200 text-[14px] outline-none focus:border-neutral-400"
+            className="w-full rounded-xl border border-neutral-200 px-3.5 py-2.5 text-[14px] outline-none focus:border-neutral-400"
             placeholder="密码"
             type="password"
             value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && submit()}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
           />
         </div>
 
         <button
           onClick={submit}
           disabled={loading || !email || !password}
-          className="w-full mt-4 py-2.5 rounded-xl bg-neutral-900 text-white text-[14px] font-semibold disabled:opacity-30"
+          className="mt-4 w-full rounded-xl bg-neutral-900 py-2.5 text-[14px] font-semibold text-white disabled:opacity-30"
         >
           {loading ? "请稍候…" : mode === "login" ? "登录" : "注册"}
         </button>
 
         <p className="mt-4 text-center text-[13px] text-neutral-400">
           {mode === "login" ? "还没有账号？" : "已有账号？"}
-          <button className="ml-1 text-neutral-800 font-medium" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}>
+          <button
+            className="ml-1 font-medium text-neutral-800"
+            onClick={() => {
+              setMode(mode === "login" ? "signup" : "login");
+              setError("");
+            }}
+          >
             {mode === "login" ? "注册" : "登录"}
           </button>
         </p>

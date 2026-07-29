@@ -24,67 +24,76 @@ interface BlueprintResultProps {
 }
 
 export default function BlueprintResult({
-  imageUrl, stats, originalUrl, onDownload, onRegenerate, onReset,
+  imageUrl,
+  stats,
+  originalUrl,
+  onDownload,
+  onRegenerate,
+  onReset,
 }: BlueprintResultProps) {
   const brandLabel = stats.brand === "artkal" ? "Artkal" : "Perler";
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="animate-fade-in space-y-6">
       {/* success banner */}
-      <div className="flex items-center gap-3 px-5 py-4 rounded-2xl bg-emerald-50 border border-emerald-100">
-        <CheckCircleIcon className="w-5 h-5 text-emerald-500 shrink-0" />
-        <div className="flex-1 min-w-0">
+      <div className="flex items-center gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-4">
+        <CheckCircleIcon className="h-5 w-5 shrink-0 text-emerald-500" />
+        <div className="min-w-0 flex-1">
           <p className="text-[14px] font-semibold text-emerald-700">图纸生成成功</p>
           <p className="text-[13px] text-emerald-600/70">
-            {stats.grid_size}×{stats.grid_size} · {stats.total.toLocaleString()} 颗 · {stats.n_colors} 色 · {brandLabel}
+            {stats.grid_size}×{stats.grid_size} · {stats.total.toLocaleString()} 颗 ·{" "}
+            {stats.n_colors} 色 · {brandLabel}
           </p>
         </div>
         <button
           onClick={onDownload}
-          className="ml-auto shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-semibold
-                     bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm"
+          className="ml-auto inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
         >
-          <DownloadIcon className="w-4 h-4" />
+          <DownloadIcon className="h-4 w-4" />
           下载 PNG
         </button>
       </div>
 
       {/* comparison: original vs blueprint */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
-          <div className="px-4 py-3 border-b border-neutral-100 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-neutral-400" />
-            <h3 className="text-[13px] font-semibold text-neutral-500 uppercase tracking-wider">原图</h3>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+          <div className="flex items-center gap-2 border-b border-neutral-100 px-4 py-3">
+            <span className="h-1.5 w-1.5 rounded-full bg-neutral-400" />
+            <h3 className="text-[13px] font-semibold tracking-wider text-neutral-500 uppercase">
+              原图
+            </h3>
           </div>
-          <div className="p-4 bg-neutral-50 flex items-center justify-center min-h-[200px]">
+          <div className="flex min-h-[200px] items-center justify-center bg-neutral-50 p-4">
             {originalUrl && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={originalUrl} alt="原图" className="max-w-full max-h-[300px] object-contain rounded-lg" />
+              <img
+                src={originalUrl}
+                alt="原图"
+                className="max-h-[300px] max-w-full rounded-lg object-contain"
+              />
             )}
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
-          <div className="px-4 py-3 border-b border-neutral-100 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <h3 className="text-[13px] font-semibold text-neutral-500 uppercase tracking-wider">拼豆图纸</h3>
+        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+          <div className="flex items-center gap-2 border-b border-neutral-100 px-4 py-3">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            <h3 className="text-[13px] font-semibold tracking-wider text-neutral-500 uppercase">
+              拼豆图纸
+            </h3>
           </div>
-          <div className="p-4 bg-neutral-100/50">
+          <div className="bg-neutral-100/50 p-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={imageUrl} alt="拼豆图纸" className="w-full h-auto rounded-lg shadow-sm" />
+            <img src={imageUrl} alt="拼豆图纸" className="h-auto w-full rounded-lg shadow-sm" />
           </div>
         </div>
       </div>
 
       {/* color legend & stats */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
+      <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
           <div>
-            <h3 className="text-[14px] font-semibold text-neutral-800">
-              颜色图例
-            </h3>
-            <p className="text-[12px] text-neutral-400 mt-0.5">
-              匹配至 {brandLabel} 色卡
-            </p>
+            <h3 className="text-[14px] font-semibold text-neutral-800">颜色图例</h3>
+            <p className="mt-0.5 text-[12px] text-neutral-400">匹配至 {brandLabel} 色卡</p>
           </div>
           <span className="text-[13px] text-neutral-400">
             共 {stats.total.toLocaleString()} 颗 · {stats.n_colors} 色
@@ -92,7 +101,7 @@ export default function BlueprintResult({
         </div>
 
         {/* proportional bar */}
-        <div className="px-5 py-3 border-b border-neutral-50 flex items-center gap-1 h-6">
+        <div className="flex h-6 items-center gap-1 border-b border-neutral-50 px-5 py-3">
           {stats.rgb.map((color, i) => {
             const pct = (stats.counts[i] / stats.total) * 100;
             if (pct < 0.8) return null;
@@ -111,7 +120,7 @@ export default function BlueprintResult({
         </div>
 
         {/* swatch list */}
-        <div className="px-5 py-3 max-h-[500px] overflow-y-auto divide-y divide-neutral-50">
+        <div className="max-h-[500px] divide-y divide-neutral-50 overflow-y-auto px-5 py-3">
           {stats.rgb.map((color, i) => (
             <ColorSwatch
               key={stats.codes[i]}
@@ -129,15 +138,13 @@ export default function BlueprintResult({
       <div className="flex items-center gap-3">
         <button
           onClick={onRegenerate}
-          className="flex-1 py-3 rounded-xl text-[14px] font-semibold border border-neutral-200
-                     text-neutral-600 hover:bg-neutral-50 transition-colors"
+          className="flex-1 rounded-xl border border-neutral-200 py-3 text-[14px] font-semibold text-neutral-600 transition-colors hover:bg-neutral-50"
         >
           重新生成
         </button>
         <button
           onClick={onReset}
-          className="flex-1 py-3 rounded-xl text-[14px] font-semibold border border-neutral-200
-                     text-neutral-600 hover:bg-neutral-50 transition-colors"
+          className="flex-1 rounded-xl border border-neutral-200 py-3 text-[14px] font-semibold text-neutral-600 transition-colors hover:bg-neutral-50"
         >
           制作新图纸
         </button>

@@ -9,8 +9,15 @@ export const metadata: Metadata = {
   description:
     "上传照片，自动生成专业拼豆图纸。支持多种尺寸与颜色，包含网格、图例与数量统计，免费在线使用。",
   keywords: [
-    "拼豆", "拼豆图纸", "perler beads", "hama beads", "bead art",
-    "图纸生成器", "拼豆图案", "像素画", "拼豆设计",
+    "拼豆",
+    "拼豆图纸",
+    "perler beads",
+    "hama beads",
+    "bead art",
+    "图纸生成器",
+    "拼豆图案",
+    "像素画",
+    "拼豆设计",
   ],
   authors: [{ name: "爱拼豆" }],
   robots: "index, follow",
@@ -27,14 +34,10 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN" className="antialiased">
-      <body className="min-h-screen flex flex-col">{children}</body>
+      <body className="flex min-h-screen flex-col">{children}</body>
     </html>
   );
 }

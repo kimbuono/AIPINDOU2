@@ -39,14 +39,17 @@ export default function Header({ onOpenAuth }: HeaderProps) {
             <>
               <Link
                 href="/projects"
-                className="text-[13px] font-medium text-neutral-500 hover:text-neutral-800 transition-colors"
+                className="text-[13px] font-medium text-neutral-500 transition-colors hover:text-neutral-800"
               >
                 我的作品
               </Link>
-              <span className="text-[13px] text-neutral-400 hidden sm:inline">{user.username}</span>
+              <span className="hidden text-[13px] text-neutral-400 sm:inline">{user.username}</span>
               <button
-                onClick={() => { clearAuth(); setUser(null); }}
-                className="text-[13px] text-neutral-400 hover:text-red-500 transition-colors"
+                onClick={() => {
+                  clearAuth();
+                  setUser(null);
+                }}
+                className="text-[13px] text-neutral-400 transition-colors hover:text-red-500"
               >
                 退出
               </button>
@@ -54,7 +57,7 @@ export default function Header({ onOpenAuth }: HeaderProps) {
           ) : (
             <button
               onClick={onOpenAuth}
-              className="px-4 py-1.5 rounded-lg bg-neutral-900 text-white text-[13px] font-medium hover:bg-neutral-800 transition-colors"
+              className="rounded-lg bg-neutral-900 px-4 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-neutral-800"
             >
               登录
             </button>

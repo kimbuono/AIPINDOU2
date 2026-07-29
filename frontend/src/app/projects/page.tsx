@@ -33,7 +33,10 @@ export default function ProjectsPage() {
   }, []);
 
   useEffect(() => {
-    if (!user) { setLoading(false); return; }
+    if (!user) {
+      setLoading(false);
+      return;
+    }
     loadProjects();
   }, [user, search]);
 
@@ -67,7 +70,7 @@ export default function ProjectsPage() {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });
-    setProjects(p => p.filter(p => p.id !== id));
+    setProjects((p) => p.filter((p) => p.id !== id));
   };
 
   const toggleFavorite = async (p: Project) => {
@@ -77,25 +80,33 @@ export default function ProjectsPage() {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
-        name: p.name, grid_size: p.grid_size, n_colors: p.n_colors,
-        brand: p.brand, is_favorite: !p.is_favorite, is_public: false,
+        name: p.name,
+        grid_size: p.grid_size,
+        n_colors: p.n_colors,
+        brand: p.brand,
+        is_favorite: !p.is_favorite,
+        is_public: false,
       }),
     });
     if (res.ok) {
-      setProjects(prev => prev.map(proj =>
-        proj.id === p.id ? { ...proj, is_favorite: !p.is_favorite ? 1 : 0 } : proj
-      ));
+      setProjects((prev) =>
+        prev.map((proj) =>
+          proj.id === p.id ? { ...proj, is_favorite: !p.is_favorite ? 1 : 0 } : proj,
+        ),
+      );
     }
   };
 
   if (!user) {
     return (
-      <div className="flex flex-col min-h-screen bg-[#fafafa]">
+      <div className="flex min-h-screen flex-col bg-[#fafafa]">
         <Header onOpenAuth={() => {}} />
-        <main className="flex-1 flex items-center justify-center">
+        <main className="flex flex-1 items-center justify-center">
           <div className="text-center">
-            <p className="text-[15px] text-neutral-500 mb-3">请先登录查看作品</p>
-            <Link href="/" className="text-[14px] text-blue-500 font-medium">返回首页</Link>
+            <p className="mb-3 text-[15px] text-neutral-500">请先登录查看作品</p>
+            <Link href="/" className="text-[14px] font-medium text-blue-500">
+              返回首页
+            </Link>
           </div>
         </main>
         <Footer />
@@ -104,46 +115,59 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#fafafa]">
+    <div className="flex min-h-screen flex-col bg-[#fafafa]">
       <Header onOpenAuth={() => {}} />
-      <main className="flex-1 mx-auto w-full max-w-4xl px-5 py-8">
-        <div className="flex items-center justify-between mb-6">
+      <main className="mx-auto w-full max-w-4xl flex-1 px-5 py-8">
+        <div className="mb-6 flex items-center justify-between">
           <h1 className="text-[20px] font-bold text-neutral-800">我的作品</h1>
-          <Link href="/" className="text-[14px] font-medium text-blue-500">+ 新建图纸</Link>
+          <Link href="/" className="text-[14px] font-medium text-blue-500">
+            + 新建图纸
+          </Link>
         </div>
 
         {/* search */}
         <input
-          className="w-full mb-6 px-4 py-2.5 rounded-xl border border-neutral-200 text-[14px] outline-none focus:border-neutral-400"
+          className="mb-6 w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-[14px] outline-none focus:border-neutral-400"
           placeholder="搜索项目…"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
         />
 
         {loading ? (
-          <p className="text-center text-neutral-400 py-12">加载中…</p>
+          <p className="py-12 text-center text-neutral-400">加载中…</p>
         ) : projects.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-[15px] text-neutral-400 mb-3">还没有保存的作品</p>
-            <Link href="/" className="text-[14px] font-medium text-blue-500">去创建第一个图纸 →</Link>
+          <div className="py-12 text-center">
+            <p className="mb-3 text-[15px] text-neutral-400">还没有保存的作品</p>
+            <Link href="/" className="text-[14px] font-medium text-blue-500">
+              去创建第一个图纸 →
+            </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map(p => (
-              <div key={p.id} className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {projects.map((p) => (
+              <div
+                key={p.id}
+                className="overflow-hidden rounded-2xl border border-neutral-200 bg-white transition-shadow hover:shadow-sm"
+              >
                 {/* thumbnail */}
-                <div className="aspect-square bg-neutral-100 flex items-center justify-center">
+                <div className="flex aspect-square items-center justify-center bg-neutral-100">
                   {p.blueprint_image ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={`data:image/png;base64,${p.blueprint_image}`} alt={p.name} className="w-full h-full object-contain p-2" />
+                    <img
+                      src={`data:image/png;base64,${p.blueprint_image}`}
+                      alt={p.name}
+                      className="h-full w-full object-contain p-2"
+                    />
                   ) : (
-                    <span className="text-neutral-300 text-[13px]">无预览</span>
+                    <span className="text-[13px] text-neutral-300">无预览</span>
                   )}
                 </div>
                 {/* info */}
                 <div className="p-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-[14px] font-semibold text-neutral-800 truncate">{p.name}</h3>
+                  <div className="mb-1 flex items-center justify-between">
+                    <h3 className="truncate text-[14px] font-semibold text-neutral-800">
+                      {p.name}
+                    </h3>
                     <button onClick={() => toggleFavorite(p)} className="text-lg">
                       {p.is_favorite ? "★" : "☆"}
                     </button>
@@ -151,19 +175,19 @@ export default function ProjectsPage() {
                   <p className="text-[12px] text-neutral-400">
                     {p.grid_size}×{p.grid_size} · {p.n_colors}色 · {p.brand.toUpperCase()}
                   </p>
-                  <p className="text-[11px] text-neutral-300 mt-1">
+                  <p className="mt-1 text-[11px] text-neutral-300">
                     {new Date(p.updated_at).toLocaleDateString("zh-CN")}
                   </p>
-                  <div className="flex gap-2 mt-3">
+                  <div className="mt-3 flex gap-2">
                     <Link
                       href={`/?load=${p.id}`}
-                      className="flex-1 text-center py-1.5 rounded-lg bg-neutral-100 text-[13px] font-medium text-neutral-600 hover:bg-neutral-200"
+                      className="flex-1 rounded-lg bg-neutral-100 py-1.5 text-center text-[13px] font-medium text-neutral-600 hover:bg-neutral-200"
                     >
                       打开
                     </Link>
                     <button
                       onClick={() => deleteProject(p.id)}
-                      className="px-3 py-1.5 rounded-lg text-[13px] text-red-500 hover:bg-red-50"
+                      className="rounded-lg px-3 py-1.5 text-[13px] text-red-500 hover:bg-red-50"
                     >
                       删除
                     </button>

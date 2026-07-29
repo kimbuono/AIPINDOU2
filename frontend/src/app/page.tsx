@@ -41,9 +41,13 @@ function warmUpBackend() {
   const ctrl = new AbortController();
   setTimeout(() => ctrl.abort(), 5000);
   fetch(`${API_URL}/api/health`, { method: "GET", signal: ctrl.signal })
-    .then(r => r.json().catch(() => ({})))
-    .then(d => { if (d.version) console.log("[爱拼豆] 后端就绪 v" + d.version); })
-    .catch(() => { /* silent */ });
+    .then((r) => r.json().catch(() => ({})))
+    .then((d) => {
+      if (d.version) console.log("[爱拼豆] 后端就绪 v" + d.version);
+    })
+    .catch(() => {
+      /* silent */
+    });
 }
 
 // ── page ───────────────────────────────────────────────────────────────
@@ -72,7 +76,9 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [saveStatus, setSaveStatus] = useState<"" | "saving" | "saved" | "error">("");
 
-  useEffect(() => { warmUpBackend(); }, []);
+  useEffect(() => {
+    warmUpBackend();
+  }, []);
   useEffect(() => {
     const { user: u } = getUser();
     setCurrentUser(u);
@@ -133,18 +139,14 @@ export default function Home() {
           throw new Error("TIMEOUT");
         }
         // Network error (DNS, CORS, connection refused)
-        throw new Error(
-          "NETWORK:" + (
-            (fetchErr as Error).message || "无法连接到服务器"
-          )
-        );
+        throw new Error("NETWORK:" + ((fetchErr as Error).message || "无法连接到服务器"));
       }
       clearTimeout(timeoutId);
 
       if (!res.ok) {
         let detail = "";
         try {
-          const body = await res.json() as { detail?: string };
+          const body = (await res.json()) as { detail?: string };
           detail = body.detail || "";
         } catch {
           // ignore parse errors on error response
@@ -204,12 +206,15 @@ export default function Home() {
   const saveProject = async () => {
     if (!currentUser || !blueprintUrl || !stats) return;
     const { token } = getUser();
-    if (!token) { setSaveStatus("error"); return; }
+    if (!token) {
+      setSaveStatus("error");
+      return;
+    }
     setSaveStatus("saving");
     try {
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), 30_000);
-      const blob = await fetch(blueprintUrl, { signal: ctrl.signal }).then(r => r.blob());
+      const blob = await fetch(blueprintUrl, { signal: ctrl.signal }).then((r) => r.blob());
       clearTimeout(tid);
       const reader = new FileReader();
       const bpBase64 = await new Promise<string>((resolve) => {
@@ -224,8 +229,10 @@ export default function Home() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           name: `拼豆图纸 ${gridSize}×${gridSize}`,
-          grid_size: gridSize, n_colors: colorCount,
-          brand, dither,
+          grid_size: gridSize,
+          n_colors: colorCount,
+          brand,
+          dither,
           blueprint_image: bpBase64,
           stats_json: JSON.stringify(stats),
         }),
@@ -264,11 +271,17 @@ export default function Home() {
         const blob = base64ToBlob(p.blueprint_image, "image/png");
         setBlueprintUrl(URL.createObjectURL(blob));
         if (p.stats_json) {
-          try { setStats(JSON.parse(p.stats_json)); } catch { /* ignore */ }
+          try {
+            setStats(JSON.parse(p.stats_json));
+          } catch {
+            /* ignore */
+          }
         }
         setAppState("done");
       }
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   };
 
   const handleDownload = () => {
@@ -284,18 +297,21 @@ export default function Home() {
   // ── render ───────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#fafafa]">
+    <div className="flex min-h-screen flex-col bg-[#fafafa]">
       <Header onOpenAuth={() => setAuthOpen(true)} />
       <AuthModal
         open={authOpen}
         onClose={() => setAuthOpen(false)}
-        onLogin={(user) => { setCurrentUser(user); (window as unknown as Record<string, () => void>).__refreshHeaderUser?.(); }}
+        onLogin={(user) => {
+          setCurrentUser(user);
+          (window as unknown as Record<string, () => void>).__refreshHeaderUser?.();
+        }}
       />
 
       <main className="flex-1">
         {appState === "idle" && <Hero />}
 
-        <div className="mx-auto max-w-2xl px-5 pb-20 space-y-6">
+        <div className="mx-auto max-w-2xl space-y-6 px-5 pb-20">
           {/* upload */}
           <section className={appState === "idle" ? "-mt-6" : "mt-8"}>
             <UploadZone
@@ -336,15 +352,18 @@ export default function Home() {
           {/* error */}
           {appState === "error" && errorMessage && (
             <section className="animate-fade-in">
-              <div className="flex items-start gap-3 px-5 py-4 rounded-2xl bg-red-50 border border-red-100">
-                <AlertIcon className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
+              <div className="flex items-start gap-3 rounded-2xl border border-red-100 bg-red-50 px-5 py-4">
+                <AlertIcon className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+                <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-semibold text-red-700">生成失败</p>
-                  <p className="text-[13px] text-red-600/70 mt-0.5">{errorMessage}</p>
+                  <p className="mt-0.5 text-[13px] text-red-600/70">{errorMessage}</p>
                 </div>
                 <button
-                  onClick={() => { setAppState("ready"); setErrorMessage(null); }}
-                  className="shrink-0 text-[13px] font-medium text-red-600 hover:text-red-800 transition-colors"
+                  onClick={() => {
+                    setAppState("ready");
+                    setErrorMessage(null);
+                  }}
+                  className="shrink-0 text-[13px] font-medium text-red-600 transition-colors hover:text-red-800"
                 >
                   重试
                 </button>
@@ -369,9 +388,13 @@ export default function Home() {
                   <button
                     onClick={saveProject}
                     disabled={saveStatus === "saving"}
-                    className="flex-1 py-3 rounded-xl text-[14px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                    className="flex-1 rounded-xl bg-emerald-600 py-3 text-[14px] font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
                   >
-                    {saveStatus === "saving" ? "正在保存…" : saveStatus === "saved" ? "已保存 ✓" : "保存到我的作品"}
+                    {saveStatus === "saving"
+                      ? "正在保存…"
+                      : saveStatus === "saved"
+                        ? "已保存 ✓"
+                        : "保存到我的作品"}
                   </button>
                   {saveStatus === "error" && (
                     <span className="text-[13px] text-red-500">保存失败</span>
@@ -380,7 +403,10 @@ export default function Home() {
               )}
               {!currentUser && (
                 <p className="mt-3 text-center text-[13px] text-neutral-400">
-                  <button onClick={() => setAuthOpen(true)} className="text-blue-500 font-medium">登录</button>后可以保存作品
+                  <button onClick={() => setAuthOpen(true)} className="font-medium text-blue-500">
+                    登录
+                  </button>
+                  后可以保存作品
                 </p>
               )}
             </>
