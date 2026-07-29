@@ -22,6 +22,12 @@ from .color_engine import (
     sierra_lite_dither,
     quality_score,
 )
+from .vision import (
+    subject_bbox,
+    face_weight_map,
+    classify_image,
+    skin_mask,
+)
 
 logger = logging.getLogger("aipindou.processor")
 
@@ -85,26 +91,39 @@ def _enhance(img: Image.Image) -> Image.Image:
     return img
 
 
-def _crop(img: Image.Image, margin: float = 0.03) -> Image.Image:
-    gray = img.convert("L")
-    w, h = gray.size
-    threshold = 248
-    left, top, right, bottom = w, h, 0, 0
-    px = gray.load()
-    for y in range(h):
-        for x in range(w):
-            if px[x, y] < threshold:  # type: ignore[index]
-                if x < left:   left = x
-                if x > right:  right = x
-                if y < top:    top = y
-                if y > bottom: bottom = y
-    if left >= right or top >= bottom:
-        return img
-    mw, mh = int((right - left) * margin), int((bottom - top) * margin)
-    return img.crop((
-        max(0, left - mw), max(0, top - mh),
-        min(w, right + mw), min(h, bottom + mh),
-    ))
+def _crop(img: Image.Image) -> Image.Image:
+    """Smart crop: use subject detection for portraits, whitespace trim for others."""
+    w, h = img.size
+    pixels = list(img.getdata())  # type: ignore[arg-type]
+    img_type = classify_image(pixels, w, h)
+
+    if img_type == "portrait":
+        # Use skin-based subject bounding box
+        left, top, right, bottom = subject_bbox(pixels, w, h)
+    else:
+        # Whitespace trim for logos/graphics/landscapes
+        gray = img.convert("L")
+        left, top, right, bottom = w, h, 0, 0
+        threshold = 248
+        px = gray.load()
+        for y in range(h):
+            for x in range(w):
+                if px[x, y] < threshold:  # type: ignore[index]
+                    if x < left:   left = x
+                    if x > right:  right = x
+                    if y < top:    top = y
+                    if y > bottom: bottom = y
+        if left >= right or top >= bottom:
+            return img
+
+    # Expand by 3% margin
+    mw, mh = int((right - left) * 0.03), int((bottom - top) * 0.03)
+    left   = max(0, left - mw)
+    top    = max(0, top - mh)
+    right  = min(w, right + mw)
+    bottom = min(h, bottom + mh)
+    logger.info(f"  Crop: [{left},{top},{right},{bottom}] type={img_type}")
+    return img.crop((left, top, right, bottom))
 
 
 def _resize_keep_aspect(img: Image.Image, grid: int) -> Image.Image:
@@ -351,7 +370,13 @@ def process(
     try:
         logger.info(f"[1/9] 加载图片: {len(data):,} bytes")
         img = _load(data)
-        logger.info(f"[1/9] 加载成功: {img.size}, mode={img.mode}")
+        # Quick classification at original resolution
+        small = img.resize((200, 200), Image.LANCZOS)
+        img_type = classify_image(
+            list(small.getdata()),  # type: ignore[arg-type]
+            200, 200,
+        )
+        logger.info(f"[1/9] 加载成功: {img.size}, mode={img.mode}, type={img_type}")
     except Exception:
         logger.error(f"[1/9] 加载失败:\n{traceback.format_exc()}")
         raise
